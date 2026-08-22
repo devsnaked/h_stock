@@ -1,0 +1,45 @@
+# Infra de desenvolvimento do h_stock.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Portas deslocadas de propósito (5435/6382) para não colidirem com o
+# unico_caminho (5434/6381) rodando na mesma máquina.
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: h_stock_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: h_stock_dev
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - h_stock_network
+
+  # Caixa de entrada local para os e-mails do Swoosh/SMTP em dev.
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: h_stock_mailhog
+    ports:
+      - "1028:1025"
+      - "8028:8025"
+    networks:
+      - h_stock_network
+
+volumes:
+  postgres_data:
+    name: h_stock_postgres_data
+
+networks:
+  h_stock_network:
+    name: h_stock_network
+    driver: bridge

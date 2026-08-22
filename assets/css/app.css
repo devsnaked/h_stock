@@ -1,0 +1,244 @@
+@import "tailwindcss" source(none);
+/* Mapa do endereço de entrega. O CSS do Leaflet entra no mesmo bundle — o
+   projeto só serve `app.css`, e nada de `<link>` para fora. */
+@import "../node_modules/leaflet/dist/leaflet.css";
+
+/* Fontes escaneadas pelo Tailwind. O front é React, então o que importa é
+   `../js`; `../../lib/web` cobre o root layout. */
+@source "../css";
+@source "../js";
+@source "../../lib/web";
+
+/* Design tokens do shadcn/ui. Tailwind v4 gera as utilities a partir daqui:
+   cada `--color-<nome>` vira `bg-<nome>`, `text-<nome>`, `border-<nome>`,
+   inclusive com modificador de opacidade (`bg-primary/10`). Não existe
+   tailwind.config.js neste projeto — é tudo CSS. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --animate-in: enter 150ms ease-out;
+  --animate-out: exit 120ms ease-in;
+}
+
+/* Paleta neutra: o cinza carrega a interface e a cor fica reservada para o
+   que significa alguma coisa — vermelho para o destrutivo, âmbar para o
+   estoque baixo. Assim um badge colorido na tela quer dizer, sempre, que há
+   algo a resolver. */
+:root {
+  --radius: 0.75rem;
+
+  --background: oklch(98.5% 0 0);
+  --foreground: oklch(14.5% 0 0);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(14.5% 0 0);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: oklch(14.5% 0 0);
+  --primary: oklch(20.5% 0 0);
+  --primary-foreground: oklch(98.5% 0 0);
+  --secondary: oklch(96.5% 0 0);
+  --secondary-foreground: oklch(20.5% 0 0);
+  --muted: oklch(96.5% 0 0);
+  --muted-foreground: oklch(52% 0 0);
+  --accent: oklch(95% 0 0);
+  --accent-foreground: oklch(20.5% 0 0);
+  --destructive: oklch(55% 0.2 27);
+  --destructive-foreground: oklch(98.5% 0 0);
+  --success: oklch(52% 0.11 155);
+  --success-foreground: oklch(98.5% 0 0);
+  --warning: oklch(70% 0.15 70);
+  --warning-foreground: oklch(38% 0.09 70);
+  --border: oklch(91.5% 0 0);
+  --input: oklch(89% 0 0);
+  --ring: oklch(62% 0 0);
+
+  /* Gráficos. A régua é a mesma da interface: o cinza é a série principal
+     (faturamento, pedidos, peso) e a cor entra só quando significa algo —
+     verde é lucro, âmbar é estoque a resolver, vermelho é venda perdida.
+     Os pares que dividem o mesmo gráfico (cinza + verde) foram conferidos
+     para daltonismo; âmbar e vermelho nunca aparecem ao lado do cinza. */
+  --chart-neutral: oklch(38% 0 0);
+  --chart-profit: oklch(52% 0.11 155);
+  --chart-warning: oklch(62% 0.13 70);
+  --chart-negative: oklch(55% 0.2 27);
+}
+
+[data-theme="dark"] {
+  /* O escuro não é o claro invertido: **nada aqui é branco**. O texto para
+     em 92% e o preenchimento mais claro da tela (um botão primário) em 52% —
+     um bloco branco no meio de um cartão escuro é o que cansa a vista de
+     quem fecha o caixa às onze da noite.
+     Os dois números são o limite de baixo, não escolha de gosto: 52% sobre o
+     cartão dá 3,3:1 (o mínimo para um elemento de interface se destacar do
+     fundo) e o texto do botão sobre ele, 5,1:1. */
+  --background: oklch(16% 0 0);
+  --foreground: oklch(92% 0 0);
+  --card: oklch(20% 0 0);
+  --card-foreground: oklch(92% 0 0);
+  --popover: oklch(21% 0 0);
+  --popover-foreground: oklch(92% 0 0);
+  --primary: oklch(52% 0 0);
+  --primary-foreground: oklch(97% 0 0);
+  --secondary: oklch(26% 0 0);
+  --secondary-foreground: oklch(90% 0 0);
+  --muted: oklch(24% 0 0);
+  --muted-foreground: oklch(68% 0 0);
+  --accent: oklch(30% 0 0);
+  --accent-foreground: oklch(93% 0 0);
+  /* As cores de significado também baixam o tom: no escuro elas saltam muito
+     mais do que no claro, e um badge de "cancelado" não precisa gritar. */
+  --destructive: oklch(62% 0.15 27);
+  --destructive-foreground: oklch(97% 0 0);
+  --success: oklch(66% 0.11 155);
+  --success-foreground: oklch(16% 0 0);
+  --warning: oklch(74% 0.11 70);
+  --warning-foreground: oklch(80% 0.08 70);
+  --border: oklch(27% 0 0);
+  --input: oklch(30% 0 0);
+  --ring: oklch(55% 0 0);
+
+  /* No escuro as séries clareiam em vez de inverter: um cinza claro sobre o
+     cartão escuro tem o mesmo peso que o cinza escuro tinha no claro. */
+  --chart-neutral: oklch(78% 0 0);
+  --chart-profit: oklch(70% 0.13 155);
+  --chart-warning: oklch(78% 0.14 70);
+  --chart-negative: oklch(65% 0.19 27);
+}
+
+/* Animações usadas pelos componentes do Radix (dialog, select, toast).
+   Substituem o plugin tailwindcss-animate, que não é necessário no v4. */
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+/* Fade na troca de página. O navegador faz o cross-fade entre a foto da tela
+   antiga e a nova; aqui só ajustamos o tempo. Curto de propósito: o app é de
+   balcão, e animação longa vira espera. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* O app é usado no balcão, no celular: nada de zoom por duplo toque. */
+    touch-action: manipulation;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+
+  /* iOS dá zoom em input com fonte menor que 16px ao focar. */
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1rem);
+  }
+}
+
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Mapa (Leaflet) ---------------------------------------------------------
+   As tiles do OpenStreetMap são claras e não têm versão escura. Inverter e
+   girar o matiz devolve um mapa escuro com as cores no lugar (verde continua
+   verde) — sem baixar outro conjunto de imagens. */
+[data-theme="dark"] .leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9);
+}
+
+[data-theme="dark"] .leaflet-container {
+  background: var(--muted);
+}
+
+/* Os controles do Leaflet vêm com a cara do site dele; aqui eles seguem os
+   tokens do app. */
+.leaflet-container {
+  font: inherit;
+}
+
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--card) 85%, transparent) !important;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.leaflet-bar a {
+  background: var(--card);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.leaflet-bar a:hover {
+  background: var(--accent);
+}
