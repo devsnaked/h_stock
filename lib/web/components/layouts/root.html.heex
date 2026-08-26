@@ -8,10 +8,10 @@
     <.inertia_title>{assigns[:page_title] || "h_stock"}</.inertia_title>
     <.inertia_head content={assigns[:inertia_head]} />
 
-    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <link rel="stylesheet" href={~p"/assets/css/app.css"} />
     <%!-- `type="module"`: o bundle sai em ESM por causa do code splitting do
           esbuild, então não pode ser carregado como script clássico. --%>
-    <script type="module" phx-track-static src={~p"/assets/js/app.js"}>
+    <script type="module" src={~p"/assets/js/app.js"}>
     </script>
     <script>
       (() => {
