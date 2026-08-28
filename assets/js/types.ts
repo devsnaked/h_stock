@@ -112,6 +112,41 @@ export type StockMovement = {
   orderCode: string | null;
 };
 
+/**
+ * O que aconteceu, no log de auditoria. A lista é fechada e espelha as
+ * constraints de `Core.Audit.Entry` — ação nova entra nos dois lugares.
+ */
+export type AuditAction =
+  | "product_created"
+  | "product_updated"
+  | "stock_in"
+  | "stock_out"
+  | "stock_return"
+  | "stock_adjusted"
+  | "order_registered"
+  | "order_cancelled"
+  | "order_driver_assigned"
+  | "order_out_for_delivery"
+  | "order_delivered"
+  | "order_reopened";
+
+export type AuditEntry = {
+  id: string;
+  action: AuditAction;
+  subjectType: "product" | "order";
+  subjectId: string;
+  /** Nome do produto ou código do pedido, congelados na hora do fato. */
+  subjectLabel: string;
+  /** A frase pronta, escrita pelo domínio quando a ação aconteceu. */
+  summary: string;
+  /** Números crus do fato, para conferir a conta. Chaves variam por ação. */
+  details: Record<string, unknown>;
+  userId: string | null;
+  /** Congelado: continua certo depois de a pessoa mudar de nome ou sair. */
+  userName: string | null;
+  insertedAt: string;
+};
+
 export type DiscountType = "none" | "percent" | "amount";
 
 /**

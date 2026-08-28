@@ -1,0 +1,62 @@
+# Produção do h_stock numa máquina só.
+#
+#   cp .env.prod.example .env.prod   # e preencha
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# São dois containers: a aplicação (release Elixir) e o Caddy, que termina o
+# TLS e repassa. A aplicação não publica porta nenhuma para fora — só o Caddy
+# é alcançável pela internet.
+#
+# O banco é um arquivo SQLite no volume `h_stock_data`. É ele o sistema
+# inteiro: sem esse volume, uma recriação de container leva junto os pedidos.
+# Um volume, uma máquina — SQLite não escala para dois nós.
+
+services:
+  app:
+    build: .
+    image: h_stock:latest
+    container_name: h_stock
+    restart: unless-stopped
+    env_file: .env.prod
+    volumes:
+      - h_stock_data:/data
+    # O container migra e sobe sozinho (`rel/overlays/bin/start`); o
+    # healthcheck é o que o Caddy espera antes de começar a repassar.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    networks:
+      - h_stock_prod
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: h_stock_caddy
+    restart: unless-stopped
+    env_file: .env.prod
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Onde ficam os certificados. Sem persistir, cada recriação pede
+      # certificado novo ao Let's Encrypt — e há limite de emissões.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - h_stock_prod
+
+volumes:
+  h_stock_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  h_stock_prod:
+    name: h_stock_prod

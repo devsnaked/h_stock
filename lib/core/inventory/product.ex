@@ -13,10 +13,10 @@ defmodule Core.Inventory.Product do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Inventory,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  postgres do
+  sqlite do
     table "products"
     repo Core.Repo
   end
@@ -49,12 +49,23 @@ defmodule Core.Inventory.Product do
         description "Nome do primeiro lote. Em branco vira \"Lote de DD/MM\"."
       end
 
+      # O log antes do saldo inicial: os hooks rodam na ordem em que são
+      # registrados, e a linha do cadastro tem de vir antes da entrada de
+      # mercadoria que ele abriu.
+      change {Core.Inventory.Changes.LogProductChange, action: :created}
       change Core.Inventory.Changes.SetInitialStock
     end
 
     update :update do
       primary? true
       accept [:name, :unit, :price_per_gram, :min_stock_grams, :active]
+
+      # O log compara o registro antes e depois para dizer o que mudou, e
+      # comparar exige ler a linha — que é justamente o que o update atômico
+      # evita fazer.
+      require_atomic? false
+
+      change {Core.Inventory.Changes.LogProductChange, action: :updated}
     end
 
     update :add_stock do
@@ -206,17 +217,19 @@ defmodule Core.Inventory.Product do
   end
 
   calculations do
-    calculate :price_per_kg, :decimal, expr(price_per_gram * 1000) do
+    calculate :price_per_kg,
+              :decimal,
+              {Core.Calculations.Arithmetic, mult: [:price_per_gram, 1000]} do
       public? true
     end
 
     calculate :low_stock?, :boolean, expr(stock_grams <= min_stock_grams) do
       public? true
     end
-  end
 
-  aggregates do
-    sum :stock_cost_value, :batches, :remaining_cost do
+    calculate :stock_cost_value,
+              :decimal,
+              {Core.Calculations.Rollup, relationship: :batches, field: :remaining_cost} do
       description "Dinheiro parado no estoque: soma do que sobrou de cada lote."
     end
   end

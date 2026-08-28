@@ -13,10 +13,10 @@ defmodule Core.Orders.OrderItem do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Orders,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  postgres do
+  sqlite do
     table "order_items"
     repo Core.Repo
 
@@ -131,7 +131,9 @@ defmodule Core.Orders.OrderItem do
   end
 
   calculations do
-    calculate :profit, :decimal, expr(total - total_cost) do
+    calculate :profit,
+              :decimal,
+              {Core.Calculations.Arithmetic, sub: [:total, :total_cost]} do
       description "Lucro bruto da linha, antes do desconto do pedido."
       public? true
     end

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Cópia consistente do banco, com a aplicação de pé.
+#
+#   bin/backup [destino]      # padrão: /data/backup-AAAAMMDD-HHMMSS.db
+#
+# `cp` no arquivo do SQLite não serve: com o WAL ligado, parte do que já foi
+# gravado ainda está no `-wal`, e a cópia sai pela metade. `VACUUM INTO` faz o
+# próprio SQLite escrever um banco novo, íntegro, sem parar as escritas.
+set -eu
+
+cd -P -- "$(dirname -- "$0")"
+DEST="${1:-/data/backup-$(date +%Y%m%d-%H%M%S).db}"
+
+./h_stock rpc "Core.Repo.query!(\"VACUUM INTO '${DEST}'\")" >/dev/null
+echo "$DEST"

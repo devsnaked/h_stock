@@ -10,10 +10,12 @@ defmodule Core.Orders.Changes.BuildOrder do
   lote que entra no lucro da venda. Vender 300g do lote barato e 200g do caro
   são duas linhas no pedido, de propósito: elas custaram coisas diferentes.
 
-  Produtos e lotes são lidos com `FOR UPDATE` dentro da transação da criação
-  (nessa ordem, a mesma do `Core.Inventory.Changes.ApplyStockChange`): duas
+  Produtos e lotes são lidos de dentro da transação da criação
+  (`Core.Changes.InTransaction`, que a abre porque o AshSqlite não abre): duas
   vendas simultâneas do mesmo lote entram em fila, em vez de as duas verem o
-  mesmo saldo e estourarem o estoque.
+  mesmo saldo e estourarem o estoque. Quem as põe em fila é o SQLite, que tem
+  um escritor só — a transação nasce em modo `:immediate` e já segura o lock
+  de escrita. Não há travamento por linha porque não há o que dividir.
   """
   use Ash.Resource.Change
 
@@ -26,6 +28,7 @@ defmodule Core.Orders.Changes.BuildOrder do
   @impl true
   def change(changeset, _opts, context) do
     changeset
+    |> Core.Changes.InTransaction.wrap()
     |> Ash.Changeset.before_action(&build(&1, context))
     |> Ash.Changeset.after_action(&take_from_stock(&1, &2, context))
   end
@@ -97,7 +100,6 @@ defmodule Core.Orders.Changes.BuildOrder do
     products =
       Product
       |> Ash.Query.filter(id in ^ids)
-      |> Ash.Query.lock("FOR UPDATE")
       |> Ash.read!(authorize?: false)
       |> Map.new(&{&1.id, &1})
 
@@ -114,7 +116,6 @@ defmodule Core.Orders.Changes.BuildOrder do
     batches =
       Batch
       |> Ash.Query.filter(id in ^ids)
-      |> Ash.Query.lock("FOR UPDATE")
       |> Ash.read!(authorize?: false)
       |> Map.new(&{&1.id, &1})
 

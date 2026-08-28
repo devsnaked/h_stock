@@ -1,0 +1,9 @@
+#!/bin/sh
+# Sobe as migrações e só então o servidor. É o comando do container: o banco
+# SQLite mora num volume, e o schema dele tem que estar em dia antes de a
+# primeira requisição chegar.
+set -eu
+
+cd -P -- "$(dirname -- "$0")"
+./migrate
+PHX_SERVER=true exec ./h_stock start

@@ -2,17 +2,20 @@ import Config
 config :ash, policies: [show_policy_breakdowns?: true]
 
 # Configure your database
+#
+# SQLite: o banco é um arquivo na raiz do projeto (ignorado pelo git). Não há
+# servidor para subir — `mix ash.setup` cria o arquivo e roda as migrations.
 config :h_stock, Core.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  # Postgres do docker-compose.dev.yml (porta deslocada pra não colidir com
-  # outros projetos Phoenix rodando na mesma máquina).
-  port: 5435,
-  database: "h_stock_dev",
+  database: Path.expand("../h_stock_dev.db", __DIR__),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
-  pool_size: 10
+  # SQLite serializa escritas: um pool grande não acelera nada e só aumenta a
+  # briga pelo lock. Cinco conexões dão folga para as leituras.
+  pool_size: 5,
+  # `:immediate` pega o lock de escrita já no BEGIN. É o que garante que uma
+  # venda leia o saldo que vai alterar: no modo padrão (`:deferred`) duas
+  # transações leem juntas e a segunda só descobre o problema ao escrever.
+  default_transaction_mode: :immediate
 
 # For development, we disable any cache and enable
 # debugging and code reloading.

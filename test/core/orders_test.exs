@@ -154,6 +154,25 @@ defmodule Core.OrdersTest do
       assert Decimal.equal?(order.profit, "50.00")
     end
 
+    # Mesma armadilha do estoque: o SQLite faria a subtração em ponto
+    # flutuante. 0,07 − 0,05 em float não dá 0,02, e é de um centavo que se
+    # trata aqui.
+    test "lucro não perde centavo em conta de dízima" do
+      employee = user_fixture()
+      product = product_fixture(price_per_gram: "0.07", stock_grams: 100, cost_per_gram: "0.05")
+
+      {:ok, order} =
+        Orders.register_order(%{items: [sale_item(product, 100)]}, actor: employee)
+
+      assert Decimal.equal?(order.total, "7.00")
+      assert Decimal.equal?(order.cost_total, "5.00")
+
+      order = Ash.load!(order, [:profit, items: [:profit]], actor: employee)
+      assert Decimal.equal?(order.profit, "2.00")
+      assert [item] = order.items
+      assert Decimal.equal?(item.profit, "2.00")
+    end
+
     test "custo gravado no item não muda quando o lote seguinte custa outro preço" do
       admin = admin_fixture()
       product = product_fixture(price_per_gram: "0.10", stock_grams: 1_000, cost_per_gram: "0.03")

@@ -15,10 +15,10 @@ defmodule Core.Inventory.Batch do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Inventory,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  postgres do
+  sqlite do
     table "stock_batches"
     repo Core.Repo
 
@@ -139,11 +139,15 @@ defmodule Core.Inventory.Batch do
   end
 
   calculations do
-    calculate :cost_per_kg, :decimal, expr(cost_per_gram * 1000) do
+    calculate :cost_per_kg,
+              :decimal,
+              {Core.Calculations.Arithmetic, mult: [:cost_per_gram, 1000]} do
       public? true
     end
 
-    calculate :remaining_cost, :decimal, expr(remaining_grams * cost_per_gram) do
+    calculate :remaining_cost,
+              :decimal,
+              {Core.Calculations.Arithmetic, mult: [:remaining_grams, :cost_per_gram]} do
       description "Quanto dinheiro ainda está parado neste lote."
       public? true
     end

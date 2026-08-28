@@ -77,7 +77,7 @@ defmodule Web.OrderController do
       query,
       ilike(customer_name, ^like) or ilike(delivery_address, ^like) or
         ilike(note, ^like) or ilike(user.name, ^like) or ilike(driver.name, ^like) or
-        fragment("upper(replace(?::text, '-', '')) like ?", id, ^"#{code}%")
+        fragment("upper(replace(cast(? as text), '-', '')) like ?", id, ^"#{code}%")
     )
   end
 

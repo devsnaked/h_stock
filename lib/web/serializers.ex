@@ -202,6 +202,29 @@ defmodule Web.Serializers do
 
   # Decimal -> float. As casas decimais que importam (2 para dinheiro) já
   # foram arredondadas no domínio; aqui é só transporte.
+  @doc """
+  Uma linha do log de auditoria.
+
+  O nome de quem agiu sai do campo **congelado** (`user_name`), não do usuário
+  relacionado: o log tem de continuar dizendo quem fez a ação mesmo depois de
+  a pessoa mudar de nome ou ser desativada. O `user_id` acompanha só para a
+  tela filtrar por pessoa.
+  """
+  def audit_entry(entry) do
+    %{
+      id: entry.id,
+      action: entry.action,
+      subject_type: entry.subject_type,
+      subject_id: entry.subject_id,
+      subject_label: entry.subject_label,
+      summary: entry.summary,
+      details: entry.details,
+      user_id: entry.user_id,
+      user_name: entry.user_name,
+      inserted_at: entry.inserted_at
+    }
+  end
+
   defp number(nil), do: nil
   defp number(%Decimal{} = decimal), do: Decimal.to_float(decimal)
   defp number(value), do: value

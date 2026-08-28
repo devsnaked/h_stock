@@ -13,10 +13,10 @@ defmodule Core.Orders.Order do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Orders,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  postgres do
+  sqlite do
     table "orders"
     repo Core.Repo
 
@@ -98,6 +98,7 @@ defmodule Core.Orders.Order do
       change relate_actor(:user)
       change Core.Orders.Changes.AssignDriver
       change Core.Orders.Changes.BuildOrder
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_registered}
     end
 
     update :assign_driver do
@@ -119,9 +120,14 @@ defmodule Core.Orders.Order do
       end
 
       change Core.Orders.Changes.AssignDriver
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_driver_assigned}
     end
 
     update :mark_out_for_delivery do
+      # O log descreve o pedido depois da ação (quem é o entregador, para onde
+      # vai), e ler o registro é o que o update atômico dispensa fazer.
+      require_atomic? false
+
       description "O pedido saiu para entrega."
       accept []
 
@@ -135,9 +141,14 @@ defmodule Core.Orders.Order do
 
       change set_attribute(:delivery_status, :out_for_delivery)
       change set_attribute(:out_for_delivery_at, &DateTime.utc_now/0)
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_out_for_delivery}
     end
 
     update :mark_delivered do
+      # O log descreve o pedido depois da ação (quem é o entregador, para onde
+      # vai), e ler o registro é o que o update atômico dispensa fazer.
+      require_atomic? false
+
       description "O pedido chegou ao cliente."
       accept []
 
@@ -154,9 +165,14 @@ defmodule Core.Orders.Order do
 
       change set_attribute(:delivery_status, :delivered)
       change set_attribute(:delivered_at, &DateTime.utc_now/0)
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_delivered}
     end
 
     update :reopen_delivery do
+      # O log descreve o pedido depois da ação (quem é o entregador, para onde
+      # vai), e ler o registro é o que o update atômico dispensa fazer.
+      require_atomic? false
+
       description "Desfaz a marcação de entrega (registrada por engano)."
       accept []
 
@@ -172,6 +188,7 @@ defmodule Core.Orders.Order do
       # manda, e o pedido some da lista do entregador anterior.
       change set_attribute(:driver_id, nil)
       change set_attribute(:assigned_at, nil)
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_reopened}
     end
 
     update :cancel do
@@ -188,6 +205,7 @@ defmodule Core.Orders.Order do
       change set_attribute(:status, :cancelled)
       change set_attribute(:cancelled_at, &DateTime.utc_now/0)
       change Core.Orders.Changes.ReturnStock
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_cancelled}
     end
   end
 
@@ -375,14 +393,17 @@ defmodule Core.Orders.Order do
   end
 
   calculations do
-    calculate :profit, :decimal, expr(total - cost_total) do
+    calculate :profit,
+              :decimal,
+              {Core.Calculations.Arithmetic, sub: [:total, :cost_total]} do
       description "O que sobrou da venda: total (já com desconto) menos o custo."
       public? true
     end
-  end
 
-  aggregates do
-    sum :total_grams, :items, :grams
-    count :items_count, :items
+    calculate :total_grams,
+              :decimal,
+              {Core.Calculations.Rollup, relationship: :items, field: :grams}
+
+    calculate :items_count, :integer, {Core.Calculations.Rollup, relationship: :items}
   end
 end

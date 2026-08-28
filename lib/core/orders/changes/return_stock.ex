@@ -6,8 +6,9 @@ defmodule Core.Orders.Changes.ReturnStock do
   continua sendo a mesma compra, com o mesmo custo. Um cancelamento não pode
   inventar estoque sem custo nem alterar o preço médio da prateleira.
 
-  Roda no cancelamento, dentro da mesma transação: ou o pedido fica cancelado
-  e o estoque volta, ou nenhuma das duas coisas acontece.
+  Roda no cancelamento, dentro da mesma transação (`Core.Changes.InTransaction`,
+  que a abre porque o AshSqlite não abre): ou o pedido fica cancelado e o
+  estoque volta, ou nenhuma das duas coisas acontece.
   """
   use Ash.Resource.Change
 
@@ -16,7 +17,9 @@ defmodule Core.Orders.Changes.ReturnStock do
 
   @impl true
   def change(changeset, _opts, context) do
-    Ash.Changeset.after_action(changeset, fn changeset, order ->
+    changeset
+    |> Core.Changes.InTransaction.wrap()
+    |> Ash.Changeset.after_action(fn changeset, order ->
       reason =
         case Ash.Changeset.get_argument(changeset, :reason) do
           nil -> "Cancelamento do pedido #{Core.Orders.code(order)}"

@@ -81,12 +81,15 @@ Isso é policy do Ash, não filtro de controller.
 - Elixir ~> 1.15 / OTP 27
 - Node 20+ (só para instalar as dependências do front; o bundle é feito pelo
   esbuild que o Mix baixa sozinho)
-- Docker, para o Postgres de desenvolvimento
+- Docker, só para a caixa de e-mails de desenvolvimento (opcional)
+
+O banco é SQLite: um arquivo (`h_stock_dev.db`) na raiz do projeto, criado
+pelo `mix setup`. Não há servidor de banco para subir.
 
 ## Subindo o projeto
 
 ```sh
-docker compose -f docker-compose.dev.yml up -d   # Postgres (5435) + Mailhog (8028)
+docker compose -f docker-compose.dev.yml up -d   # Mailhog (8028), opcional
 mix setup                                        # deps, banco, seeds, assets
 mix phx.server                                   # http://localhost:4000
 ```
@@ -244,3 +247,58 @@ mix assets.build       # build de CSS/JS
 mix assets.deploy      # build minificado + digest (produção)
 npm --prefix assets run check   # typecheck do TypeScript
 ```
+
+## Deploy
+
+Uma máquina, um volume, dois containers: a aplicação (release Elixir) e o
+[Caddy](https://caddyserver.com), que termina o TLS e repassa. **O banco é um
+arquivo no volume `h_stock_data`** — é o sistema inteiro. SQLite não é servidor
+de banco: não dá para pôr duas máquinas na frente do mesmo arquivo, e o
+tamanho do disco é o limite.
+
+Na máquina, com Docker instalado e o domínio já apontando para o IP dela:
+
+```sh
+git clone git@github.com:devsnaked/h_stock.git && cd h_stock
+cp .env.prod.example .env.prod
+mix phx.gen.secret        # duas vezes: SECRET_KEY_BASE e TOKEN_SIGNING_SECRET
+$EDITOR .env.prod         # PHX_HOST, os dois segredos e a senha do admin
+
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec app /app/bin/seed   # só na 1ª vez
+```
+
+O container **migra sozinho antes de subir** (`rel/overlays/bin/start`), então
+uma atualização é só:
+
+```sh
+git pull && docker compose -f docker-compose.prod.yml up -d --build
+```
+
+`bin/seed` roda o mesmo `priv/repo/seeds.exs` do desenvolvimento e cria o
+admin de `ADMIN_NICKNAME`/`ADMIN_PASSWORD` — com `SEED_DEMO=false` no
+`.env.prod`, é só ele. É idempotente: rodar de novo não reverte a senha depois
+de trocada no sistema.
+
+O que o `.env.prod` precisa está comentado no `.env.prod.example`; o
+essencial é `PHX_HOST`, `SECRET_KEY_BASE` e `TOKEN_SIGNING_SECRET` (sem os
+dois últimos a aplicação se recusa a subir, de propósito). **Trocar o
+`TOKEN_SIGNING_SECRET` desconecta todo mundo.**
+
+Detalhes que valem saber:
+
+- **`/health`** responde `ok` sem autenticação e consulta o banco. É o
+  healthcheck do container e o que o Caddy espera antes de repassar.
+- **Backup é uma cópia do arquivo — mas não com `cp`.** Com o WAL ligado, uma
+  cópia crua sai pela metade; `bin/backup` pede ao próprio SQLite um banco
+  novo e íntegro, sem parar as escritas:
+
+  ```sh
+  docker compose -f docker-compose.prod.yml exec app /app/bin/backup
+  docker compose -f docker-compose.prod.yml cp app:/data/backup-… ./backup.db
+  ```
+
+- **Console remoto:** `docker compose -f docker-compose.prod.yml exec app
+  /app/bin/h_stock remote`.
+- Variáveis lidas do ambiente ficam em `config/runtime.exs`. `config.exs` é
+  lido em tempo de **compilação** — variável posta lá não chega na imagem.

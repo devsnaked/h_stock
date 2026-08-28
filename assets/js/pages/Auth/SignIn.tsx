@@ -20,17 +20,7 @@ export default function SignIn() {
     setData("user", { ...data.user, [key]: value });
 
   return (
-    <AuthLayout
-      title="h_stock"
-      subtitle="Entre para registrar pedidos e controlar o estoque"
-      footer={
-        // Não há recuperação por e-mail: o sistema não guarda endereço. Quem
-        // esquece a senha pede ao admin, que define uma nova em /usuarios.
-        <span className="text-muted-foreground">
-          Esqueceu a senha? Peça ao administrador para gerar uma nova.
-        </span>
-      }
-    >
+    <AuthLayout title="h_stock" showHeader={false}>
       <form
         className="space-y-4"
         onSubmit={(event) => {

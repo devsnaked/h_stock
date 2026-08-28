@@ -24,8 +24,7 @@ config :ash,
   bulk_actions_default_to_errors?: true,
   transaction_rollback_on_error?: true,
   redact_sensitive_values_in_errors?: true,
-  many_to_many_destroy_destination_on_match?: true,
-  known_types: [AshPostgres.Timestamptz, AshPostgres.TimestamptzUsec]
+  many_to_many_destroy_destination_on_match?: true
 
 config :spark,
   formatter: [
@@ -35,7 +34,7 @@ config :spark,
         :authentication,
         :token,
         :user_identity,
-        :postgres,
+        :sqlite,
         :resource,
         :code_interface,
         :actions,
@@ -59,7 +58,7 @@ config :h_stock,
   namespace: Core,
   ecto_repos: [Core.Repo],
   generators: [timestamp_type: :utc_datetime],
-  ash_domains: [Core.Accounts, Core.Inventory, Core.Orders]
+  ash_domains: [Core.Accounts, Core.Inventory, Core.Orders, Core.Audit]
 
 # Configure the endpoint
 config :h_stock, Web.Endpoint,
@@ -132,7 +131,8 @@ config :logger, :default_formatter,
 # Fuso da operação. O banco guarda tudo em UTC; isto existe para responder
 # "o que é hoje?" — sem ele, um pedido das 21h em São Paulo cairia no dia
 # seguinte, e o resumo do dia mentiria justamente no fim do expediente.
-config :h_stock, :timezone, System.get_env("TIMEZONE", "America/Sao_Paulo")
+# O valor efetivo vem de `TIMEZONE` em `config/runtime.exs`; isto é o padrão.
+config :h_stock, :timezone, "America/Sao_Paulo"
 # `tz` em vez de `tzdata`: a base de fusos é compilada junto do projeto, sem
 # cliente HTTP nem download em tempo de execução.
 config :elixir, :time_zone_database, Tz.TimeZoneDatabase
@@ -150,14 +150,16 @@ config :h_stock, :totp_revalidation_seconds, 3600
 # chave volta a exigi-los sem ninguém precisar reativar nada.
 #
 #     TOTP_REQUIRED=false mix phx.server
-config :h_stock, :totp_required, System.get_env("TOTP_REQUIRED", "true") == "true"
+#
+# Lida em `config/runtime.exs` — em produção a variável vale sem recompilar.
+config :h_stock, :totp_required, true
 
 # Endereço de entrega no mapa. O Nominatim (OpenStreetMap) não pede chave,
 # mas pede um `User-Agent` que identifique quem está chamando — é o que a
 # política de uso deles exige de qualquer aplicação.
 config :h_stock, :geocoding,
   endpoint: "https://nominatim.openstreetmap.org/search",
-  user_agent: System.get_env("GEOCODING_USER_AGENT", "h_stock/1.0 (loja)"),
+  user_agent: "h_stock/1.0 (loja)",
   country: "br"
 
 # Use Jason for JSON parsing in Phoenix

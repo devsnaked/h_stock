@@ -2,9 +2,9 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
   @moduledoc """
   Mexe num lote, acerta o saldo do produto e grava a movimentação.
 
-  As três coisas acontecem na mesma transação (os hooks de uma ação de update
-  do AshPostgres rodam dentro dela), então não existe saldo alterado sem lote
-  alterado, nem lote alterado sem linha no histórico.
+  As três coisas acontecem na mesma transação (`Core.Changes.InTransaction`,
+  que a abre porque o AshSqlite não abre), então não existe saldo alterado sem
+  lote alterado, nem lote alterado sem linha no histórico.
 
   Opção `:kind`:
 
@@ -13,11 +13,12 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
     * `:return` — devolve ao lote de onde saiu (cancelamento de pedido);
     * `:adjustment` — define o saldo do lote e registra a diferença.
 
-  O produto (e, fora de `:in`, o lote) é lido com `FOR UPDATE` antes da
-  conta: duas saídas simultâneas entram em fila em vez de as duas partirem do
-  mesmo saldo e uma sobrescrever a outra. A ordem do travamento é sempre
-  produto → lote, a mesma do `Core.Orders.Changes.BuildOrder`, para as duas
-  não se enroscarem.
+  O saldo do produto (e, fora de `:in`, o do lote) é relido do banco dentro da
+  transação, e não de `changeset.data`: o registro em mãos pode ter sido lido
+  antes de outra venda gravar a dela. Quem põe as saídas simultâneas em fila é
+  o próprio SQLite — a transação nasce em modo `:immediate` e segura o lock de
+  escrita do banco inteiro até o fim. Não há travamento por linha (nem
+  `FOR UPDATE`) aqui: o banco tem um escritor só.
   """
   use Ash.Resource.Change
 
@@ -30,7 +31,10 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
   @impl true
   def change(changeset, opts, context) do
     kind = Keyword.fetch!(opts, :kind)
-    Ash.Changeset.before_action(changeset, &apply_kind(&1, kind, context))
+
+    changeset
+    |> Core.Changes.InTransaction.wrap()
+    |> Ash.Changeset.before_action(&apply_kind(&1, kind, context))
   end
 
   # Entrada: lote novo. Não há saldo de lote para conferir — só somar.
@@ -46,6 +50,7 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
            {:ok, _movement} <-
              record(changeset, product, batch, context,
                kind: :in,
+               audit: :stock_in,
                delta: grams,
                balance: balance,
                batch_balance: grams
@@ -94,6 +99,7 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
                {:ok, _movement} <-
                  record(changeset, product, batch, context,
                    kind: movement_kind(kind),
+                   audit: audit_action(kind),
                    delta: delta,
                    balance: balance,
                    batch_balance: batch_balance
@@ -117,14 +123,20 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
   defp movement_kind(:return), do: :in
   defp movement_kind(kind), do: kind
 
-  # O saldo do produto sai do banco, travado, e não de `changeset.data`: o
-  # registro em mãos pode ter sido lido antes de outra venda gravar a dela.
+  # O log de auditoria, ao contrário do histórico, separa devolução de
+  # entrada: quem confere quer distinguir mercadoria comprada de mercadoria
+  # que voltou de uma venda cancelada.
+  defp audit_action(:out), do: :stock_out
+  defp audit_action(:return), do: :stock_return
+  defp audit_action(:adjustment), do: :stock_adjusted
+
+  # O saldo do produto sai do banco, e não de `changeset.data`: o registro em
+  # mãos pode ter sido lido antes de outra venda gravar a dela.
   defp locked_stock(changeset) do
     product_id = changeset.data.id
 
     Product
     |> Ash.Query.filter(id == ^product_id)
-    |> Ash.Query.lock("FOR UPDATE")
     |> Ash.read_one!(authorize?: false)
     |> Map.fetch!(:stock_grams)
   end
@@ -135,7 +147,6 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
 
     Batch
     |> Ash.Query.filter(id == ^batch_id and product_id == ^product_id)
-    |> Ash.Query.lock("FOR UPDATE")
     |> Ash.read_one(authorize?: false)
     |> case do
       {:ok, %Batch{} = batch} -> {:ok, batch}
@@ -195,5 +206,68 @@ defmodule Core.Inventory.Changes.ApplyStockChange do
     StockMovement
     |> Ash.Changeset.for_create(:create, attrs, authorize?: false)
     |> Ash.create()
+    |> case do
+      {:ok, movement} ->
+        audit(product, batch, context, fields, attrs)
+        {:ok, movement}
+
+      error ->
+        error
+    end
   end
+
+  # A linha do log de auditoria. Sai daqui, e não das quatro ações, porque
+  # este é o funil por onde toda mudança de saldo passa — ação de estoque
+  # nova que não escreva o histórico também não mexe no estoque.
+  defp audit(product, batch, context, fields, attrs) do
+    action = Keyword.fetch!(fields, :audit)
+    delta = Keyword.fetch!(fields, :delta)
+
+    Core.Audit.record(action, product, context.actor,
+      summary: summary(action, batch, delta, attrs),
+      details: %{
+        grams: to_string(delta),
+        batch_label: batch.label,
+        cost_per_gram: to_string(batch.cost_per_gram),
+        total_cost: to_string(attrs.total_cost),
+        balance_after: to_string(attrs.balance_after),
+        batch_balance_after: to_string(attrs.batch_balance_after),
+        reason: attrs.reason,
+        order_id: attrs.order_id
+      }
+    )
+  end
+
+  defp summary(action, batch, delta, attrs) do
+    peso = Core.Audit.grams(delta)
+    saldo = Core.Audit.grams(attrs.balance_after)
+
+    base =
+      case action do
+        :stock_in ->
+          "Entrada de #{peso} a #{Core.Audit.money(batch.cost_per_gram)}/g " <>
+            "no lote #{batch.label}"
+
+        :stock_out ->
+          "Saída de #{peso} do lote #{batch.label}"
+
+        :stock_return ->
+          "Devolução de #{peso} ao lote #{batch.label}"
+
+        :stock_adjusted ->
+          "Ajuste do lote #{batch.label}: #{sinal(delta)}#{peso}"
+      end
+
+    # O motivo, quando existe, já nomeia o pedido ("Pedido 7A9173",
+    # "Cancelamento do pedido 7A9173: ..."): repetir o código ao lado dele
+    # deixava a frase dizendo a mesma coisa duas vezes.
+    [base, attrs.reason || pedido(attrs.order_id), "saldo do produto: #{saldo}"]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" — ")
+  end
+
+  defp sinal(delta), do: if(Decimal.negative?(delta), do: "−", else: "+")
+
+  defp pedido(nil), do: nil
+  defp pedido(order_id), do: "pedido #{Core.Orders.code(order_id)}"
 end

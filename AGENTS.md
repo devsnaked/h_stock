@@ -7,7 +7,7 @@ renderização de páginas aqui.
 
 ## Arquitetura
 
-- `lib/core/` — domínio (`Core.*`), em recursos Ash sobre AshPostgres:
+- `lib/core/` — domínio (`Core.*`), em recursos Ash sobre AshSqlite:
   - `Core.Accounts` — usuários, perfis (`:admin`/`:employee`/`:driver`) e as
     permissões `can_manage_stock` e `can_manage_orders`;
   - `Core.Inventory` — produtos e histórico de estoque;
@@ -147,6 +147,96 @@ renderização de páginas aqui.
   resolver, vermelho é venda perdida. Nada de eixo duplo, e todo gráfico traz
   a tabela dos números junto (`ChartTable`).
 
+## O banco é SQLite (e isso restringe o Ash)
+
+Um arquivo, `h_stock_dev.db`, na raiz. Não há servidor de banco: `mix
+ash.setup` cria e migra. Em produção, `DATABASE_PATH` aponta para um volume
+persistente.
+
+O `AshSqlite` faz menos que o `AshPostgres`, e três buracos já custaram
+código. Antes de escrever recurso novo, saiba deles:
+
+- **Não existe agregado de relacionamento.** `sum`/`count` num bloco
+  `aggregates` nem compilam (`can?({:aggregate, _})` é `false`). Use
+  `Core.Calculations.Rollup`, que carrega o relacionamento e soma no Elixir.
+  O preço é não dar para filtrar nem ordenar por eles no banco.
+- **Não existe transação automática.** O Ash responde `false` para
+  `can?(:transact)` com este data layer: uma ação que escreve em três tabelas
+  vai gravando uma a uma, e um erro no meio deixa lixo. Ação de escrita
+  múltipla **precisa** de `Core.Changes.InTransaction.wrap(changeset)`.
+- **Não existe `SELECT ... FOR UPDATE`.** Quem serializa é o próprio SQLite:
+  `default_transaction_mode: :immediate` faz o `BEGIN` já tomar o lock de
+  escrita do banco inteiro. Não tente travar linha.
+
+E uma armadilha de tipo: **SQLite não tem decimal**. Valor guardado faz
+round-trip exato (o `ecto_sqlite3` grava `Decimal` como texto), mas conta
+feita pelo banco vira `REAL` — `expr(remaining_grams * cost_per_gram)`
+devolvia `7.1000000000000005` em vez de `7.10`. Aritmética de dinheiro vai
+para `Core.Calculations.Arithmetic`, que faz a conta em `Decimal` no Elixir.
+`expr(...)` continua certo para comparação e filtro; o que não pode é
+produzir dinheiro.
+
+`nickname` é `ci_string`. No SQLite quem garante isso no banco é
+`collate: :nocase` **na coluna** (o índice único herda a colação) — está
+escrito à mão na migration inicial, porque o gerador do AshSqlite não emite
+`collate`.
+
+Os testes rodam com `max_cases: 1`: SQLite tem um escritor só, e dois
+sandboxes concorrentes se bloqueiam.
+
+**Nunca apague `h_stock_dev.db` com a aplicação de pé.** O banco agora é um
+arquivo, e um servidor que já o abriu continua segurando o inode antigo
+depois do `rm` — enquanto o `-wal` e o `-shm` são recriados pelo *caminho*.
+O resultado é um WAL órfão: as escritas novas parecem funcionar, o log mostra
+`commit`, e na abertura seguinte o SQLite descarta tudo por não bater com o
+arquivo principal. Foi assim que um `mix ash.setup` + seeds "bem-sucedido"
+deixou o banco vazio e o login recusando senha certa. Pare o servidor antes
+de recriar o banco. Com Postgres isso não existia.
+
+## Log de auditoria (`Core.Audit`)
+
+Toda ação que mexe em estoque ou em pedido grava uma linha em
+`audit_entries` dizendo **quem fez e o quê**. A tela é `/auditoria`, só do
+admin — e quem garante isso é a policy de `Core.Audit.Entry`, não o plug da
+rota.
+
+O log é uma tabela à parte do `StockMovement` de propósito. A movimentação é
+um **livro-razão**: existe para o saldo bater, e por isso só enxerga o que
+mexe em gramas. Alteração de preço, cadastro de produto, cancelamento de
+venda e despacho de entrega não passam por ela. A tela do administrador lê só
+o log, que é completo por construção — juntar duas fontes faria a completude
+depender de alguém lembrar de consultar as duas.
+
+**Ação nova que mexe em estoque ou pedido precisa escrever no log.** Os
+pontos de registro já existentes:
+
+- `Core.Inventory.Changes.ApplyStockChange` — o funil das quatro ações de
+  estoque; escreve dentro do mesmo `record/5` que grava a movimentação.
+- `Core.Inventory.Changes.SetInitialStock` — o saldo inicial do cadastro, que
+  não passa pelo funil acima.
+- `Core.Inventory.Changes.LogProductChange` — cadastro e alteração de produto
+  (só o que de fato mudou vira linha).
+- `Core.Orders.Changes.LogOrderEvent` — venda, cancelamento, despacho,
+  saída, entrega e reabertura.
+
+Três coisas a respeitar ao mexer nisso:
+
+- **A linha é imutável e auto-suficiente.** Não há ação de update nem de
+  destroy no recurso. Nome de quem agiu, rótulo do produto/pedido e a frase
+  ficam **congelados** na linha: pessoa desativada e produto renomeado não
+  reescrevem o passado.
+- **`Core.Audit.record/4` levanta.** Log que falha derruba a ação inteira, e
+  a transação desfaz o resto. Mudança de estoque sem registro é o que ele
+  existe para tornar impossível.
+- **A change do log vai por último** na lista do recurso — os hooks rodam na
+  ordem em que são registrados, e a frase descreve o registro depois da ação.
+  A exceção é `Product.create`, onde o log do cadastro vem antes do
+  `SetInitialStock` para a linha do produto anteceder a do saldo inicial.
+
+Ação nova na lista exige três lugares: a constraint `one_of` de
+`Core.Audit.Entry.action`, o `AuditAction` em `assets/js/types.ts` e o mapa
+`LOOK` em `assets/js/pages/Audit/Index.tsx`.
+
 ## Fluxo de trabalho
 
 - Página nova = rota + `render_inertia/2,3` no controller + arquivo em
@@ -168,6 +258,10 @@ renderização de páginas aqui.
 - Props compartilhados (`user`, `csrfToken`, `flash`) vêm do
   `Web.Plugs.SetCurrentUser` — não os repita nos controllers.
 - Mudou recurso Ash? `mix ash.codegen <nome>`. Migration escrita à mão, nunca.
+- **Variável de ambiente nova se lê em `config/runtime.exs`**, nunca em
+  `config/config.exs`: este último é lido em tempo de compilação, e numa
+  imagem Docker o valor de produção nunca chegaria nele. O deploy (release
+  em container, Caddy na frente, banco num volume) está no README.
 - `mix precommit` e `npm --prefix assets run check` antes de encerrar.
 
 ## Project guidelines

@@ -4,7 +4,9 @@ defmodule Core.Inventory.Changes.SetInitialStock do
 
   Grava o saldo, abre o primeiro lote (com o custo informado) e a movimentação
   de entrada que explica os dois — o histórico começa já batendo com o
-  estoque, sem "saldo que apareceu do nada" nem mercadoria sem custo.
+  estoque, sem "saldo que apareceu do nada" nem mercadoria sem custo. As três
+  escritas são uma transação só (`Core.Changes.InTransaction`, que a abre
+  porque o AshSqlite não abre).
   """
   use Ash.Resource.Change
 
@@ -21,10 +23,27 @@ defmodule Core.Inventory.Changes.SetInitialStock do
       changeset
     else
       changeset
+      |> Core.Changes.InTransaction.wrap()
       |> Ash.Changeset.force_change_attribute(:stock_grams, grams)
       |> Ash.Changeset.after_action(fn _changeset, product ->
         with {:ok, batch} <- open_batch(product, grams, cost, label, context),
              {:ok, _movement} <- record(product, batch, grams, context) do
+          # O saldo inicial é uma entrada de mercadoria como qualquer outra, e
+          # tem de aparecer no log de estoque: ela não passa pelo
+          # `ApplyStockChange`, que é onde as outras se registram.
+          Core.Audit.record(:stock_in, product, context.actor,
+            summary:
+              "Saldo inicial de #{Core.Audit.grams(grams)} a " <>
+                "#{Core.Audit.money(cost)}/g no lote #{batch.label}",
+            details: %{
+              grams: to_string(grams),
+              batch_label: batch.label,
+              cost_per_gram: to_string(cost),
+              balance_after: to_string(grams),
+              reason: "Saldo inicial"
+            }
+          )
+
           {:ok, product}
         end
       end)

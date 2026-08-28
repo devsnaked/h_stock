@@ -17,10 +17,10 @@ defmodule Core.Inventory.StockMovement do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Inventory,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer]
 
-  postgres do
+  sqlite do
     table "stock_movements"
     repo Core.Repo
 

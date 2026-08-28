@@ -22,23 +22,43 @@ end
 
 config :h_stock, Web.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Configuração vinda do ambiente, válida em qualquer env. Fica aqui, e não em
+# `config/config.exs`, porque `config.exs` é lido em tempo de compilação: numa
+# imagem Docker, uma variável definida só no `docker compose` não chegaria a
+# tempo de mudar nada.
+config :h_stock, :timezone, System.get_env("TIMEZONE", "America/Sao_Paulo")
+
+config :h_stock, :totp_required, System.get_env("TOTP_REQUIRED", "true") == "true"
+
+# O Nominatim (OpenStreetMap) exige um `User-Agent` que identifique a
+# aplicação; em produção vale pôr um contato real, é o que a política de uso
+# deles pede.
+# `config/2` mescla listas de palavras-chave: só o `user_agent` é trocado, o
+# `endpoint` e o `country` continuam vindo de `config/config.exs`.
+config :h_stock, :geocoding,
+  user_agent: System.get_env("GEOCODING_USER_AGENT", "h_stock/1.0 (loja)")
+
 if config_env() == :prod do
-  database_url =
-    System.get_env("DATABASE_URL") ||
+  # SQLite: o banco é um arquivo no disco da máquina que roda a aplicação.
+  # `DATABASE_PATH` precisa apontar para um volume persistente — num container
+  # sem volume montado, o banco some junto com o container.
+  database_path =
+    System.get_env("DATABASE_PATH") ||
       raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
+      environment variable DATABASE_PATH is missing.
+      For example: /data/h_stock.db
       """
 
-  maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
-
   config :h_stock, Core.Repo,
-    # ssl: true,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    # For machines with several cores, consider starting multiple pools of `pool_size`
-    # pool_count: 4,
-    socket_options: maybe_ipv6
+    database: database_path,
+    # SQLite serializa escritas; o pool existe para as leituras.
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
+    # Espera pelo lock de escrita antes de desistir, em milissegundos.
+    busy_timeout: String.to_integer(System.get_env("DB_BUSY_TIMEOUT") || "5000"),
+    # `:immediate` pega o lock de escrita já no BEGIN. É o que garante que uma
+    # venda leia o saldo que vai alterar: no modo padrão (`:deferred`) duas
+    # transações leem juntas e a segunda só descobre o problema ao escrever.
+    default_transaction_mode: :immediate
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

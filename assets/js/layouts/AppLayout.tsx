@@ -1,6 +1,15 @@
 import * as React from "react";
 import { Head, Link, usePage } from "@inertiajs/react";
-import { Bike, Boxes, ClipboardList, Home, LogOut, ShieldCheck, Users } from "lucide-react";
+import {
+  Bike,
+  Boxes,
+  ClipboardList,
+  Home,
+  LogOut,
+  ScrollText,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
 import { useAuth } from "@/hooks/useAuth";
@@ -42,6 +51,7 @@ const NAV: NavItem[] = [
   { href: "/pedidos", label: "Pedidos", icon: ClipboardList },
   { href: "/produtos", label: "Estoque", icon: Boxes },
   { href: "/usuarios", label: "Equipe", icon: Users, adminOnly: true },
+  { href: "/auditoria", label: "Auditoria", icon: ScrollText, adminOnly: true },
 ];
 
 // O entregador tem uma tela só — as outras rotas nem abrem para ele

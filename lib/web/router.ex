@@ -60,6 +60,12 @@ defmodule Web.Router do
     plug Web.Plugs.RequireDashboard
   end
 
+  # Sinal de vida do container e do proxy. Sem pipeline nenhuma: responde
+  # antes de sessão, de Inertia e de autenticação.
+  scope "/", Web do
+    get "/health", HealthController, :index
+  end
+
   # Público: só o que uma pessoa deslogada precisa alcançar.
   scope "/", Web do
     pipe_through :browser
@@ -115,6 +121,10 @@ defmodule Web.Router do
     post "/usuarios/:id/ativo", UserController, :toggle_active
     post "/usuarios/:id/senha", UserController, :reset_password
     post "/usuarios/:id/2fa/desligar", UserController, :disable_totp
+
+    # O log de auditoria. Fica no mesmo escopo da equipe porque tem a mesma
+    # régua: é do administrador e de mais ninguém.
+    get "/auditoria", AuditController, :index
   end
 
   # A análise da loja. Fica sozinha porque é a única tela de balcão com

@@ -2,11 +2,11 @@ defmodule Core.Accounts.Token do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Accounts,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshAuthentication.TokenResource]
 
-  postgres do
+  sqlite do
     table "tokens"
     repo Core.Repo
   end

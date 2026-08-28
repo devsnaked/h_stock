@@ -21,7 +21,7 @@ defmodule Core.Accounts.User do
   use Ash.Resource,
     otp_app: :h_stock,
     domain: Core.Accounts,
-    data_layer: AshPostgres.DataLayer,
+    data_layer: AshSqlite.DataLayer,
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshAuthentication]
 
@@ -60,7 +60,7 @@ defmodule Core.Accounts.User do
     end
   end
 
-  postgres do
+  sqlite do
     table "users"
     repo Core.Repo
   end

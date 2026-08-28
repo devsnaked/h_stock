@@ -2,29 +2,14 @@
 #
 #   docker compose -f docker-compose.dev.yml up -d
 #
-# Portas deslocadas de propósito (5435/6382) para não colidirem com o
-# unico_caminho (5434/6381) rodando na mesma máquina.
+# O banco não está aqui: é um arquivo SQLite na raiz do projeto
+# (`h_stock_dev.db`), criado por `mix ash.setup`. O que sobra para o Docker é
+# a caixa de entrada dos e-mails.
+#
+# Porta deslocada de propósito (8028) para não colidir com o unico_caminho
+# rodando na mesma máquina.
 
 services:
-  db:
-    image: postgres:17-alpine
-    container_name: h_stock_db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: h_stock_dev
-    ports:
-      - "5435:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - h_stock_network
-
   # Caixa de entrada local para os e-mails do Swoosh/SMTP em dev.
   mailhog:
     image: mailhog/mailhog:latest
@@ -34,10 +19,6 @@ services:
       - "8028:8025"
     networks:
       - h_stock_network
-
-volumes:
-  postgres_data:
-    name: h_stock_postgres_data
 
 networks:
   h_stock_network:

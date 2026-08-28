@@ -9,13 +9,21 @@ config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
 config :h_stock, Core.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  port: 5435,
-  database: "h_stock_test#{System.get_env("MIX_TEST_PARTITION")}",
+  database: Path.expand("../h_stock_test#{System.get_env("MIX_TEST_PARTITION")}.db", __DIR__),
   pool: Ecto.Adapters.SQL.Sandbox,
-  pool_size: System.schedulers_online() * 2
+  pool_size: 5,
+  # O sandbox segura uma transação aberta durante o teste inteiro. Em SQLite
+  # só existe um escritor por vez, então um teste que espera o lock espera o
+  # outro teste terminar — 30s dão margem sem mascarar um travamento real.
+  busy_timeout: 30_000,
+  default_transaction_mode: :immediate
+
+# SQLite tem um escritor só. Os testes continuam marcados `async: true` (é o
+# que diz que eles não compartilham estado), mas rodam um de cada vez: dois
+# sandboxes escrevendo no mesmo arquivo se bloqueiam mutuamente e o segundo
+# só destrava quando o primeiro solta — que é o mesmo que serializar, porém
+# com timeouts pelo caminho.
+config :ex_unit, max_cases: 1
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

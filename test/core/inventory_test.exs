@@ -206,6 +206,63 @@ defmodule Core.InventoryTest do
       product = Ash.load!(product, :stock_cost_value, actor: admin)
       assert Decimal.equal?(product.stock_cost_value, Decimal.new("20.00"))
     end
+
+    # O SQLite não tem tipo decimal: uma conta feita por ele vira ponto
+    # flutuante, e 1000 × 0,0071 volta como 7.1000000000000005. Os números
+    # dos outros testes (0,02, 0,05) por acaso são exatos em float e passam
+    # de qualquer jeito — este não é, e é o que segura a conta no Elixir.
+    test "centavos não viram dízima na soma do estoque" do
+      admin = admin_fixture()
+      product = product_fixture(stock_grams: 1_000, cost_per_gram: "0.0071")
+
+      product = Ash.load!(product, :stock_cost_value, actor: admin)
+      assert Decimal.equal?(product.stock_cost_value, Decimal.new("7.10"))
+
+      [lote] = batches(product)
+      lote = Ash.load!(lote, [:remaining_cost, :cost_per_kg], actor: admin)
+      assert Decimal.equal?(lote.remaining_cost, Decimal.new("7.10"))
+      assert Decimal.equal?(lote.cost_per_kg, Decimal.new("7.10"))
+    end
+  end
+
+  describe "atomicidade" do
+    # O cadastro com saldo inicial escreve em três tabelas: o produto, o
+    # primeiro lote e a movimentação que explica os dois. Um erro depois da
+    # primeira escrita não pode deixar produto sem lote nem lote sem
+    # histórico. Quem garante isso é `Core.Changes.InTransaction` — o
+    # AshSqlite responde `false` para `can?(:transact)` e o Ash, sozinho, não
+    # abre transação nenhuma com ele.
+    #
+    # O hook de erro é acrescentado aqui de fora justamente para falhar
+    # *depois* das gravações: as recusas do domínio (estoque insuficiente,
+    # lote errado) acontecem antes delas e não exercitariam o rollback.
+    test "erro depois da gravação desfaz produto, lote e movimentação" do
+      admin = admin_fixture()
+
+      assert {:error, _error} =
+               Product
+               |> Ash.Changeset.for_create(
+                 :create,
+                 %{
+                   name: "Produto que não vinga",
+                   unit: :kg,
+                   price_per_gram: Decimal.new("0.10"),
+                   min_stock_grams: Decimal.new(0),
+                   initial_stock_grams: Decimal.new(100),
+                   initial_cost_per_gram: Decimal.new("0.05")
+                 },
+                 actor: admin,
+                 authorize?: false
+               )
+               |> Ash.Changeset.after_action(fn _changeset, _product ->
+                 {:error, "falhou depois de gravar"}
+               end)
+               |> Ash.create()
+
+      assert [] == Ash.read!(Product, authorize?: false)
+      assert [] == Ash.read!(Core.Inventory.Batch, authorize?: false)
+      assert [] == Ash.read!(Core.Inventory.StockMovement, authorize?: false)
+    end
   end
 
   describe "permissões" do

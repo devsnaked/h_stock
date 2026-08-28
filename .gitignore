@@ -35,3 +35,12 @@ h_stock-*.tar
 npm-debug.log
 /assets/node_modules/
 
+
+# O banco de desenvolvimento e de teste é um arquivo SQLite na raiz.
+# `-shm` e `-wal` são os companheiros do modo WAL.
+*.db
+*.db-shm
+*.db-wal
+
+# Segredos de produção.
+.env.prod

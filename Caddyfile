@@ -1,0 +1,10 @@
+# Proxy de produção. O Caddy resolve o certificado sozinho, desde que o
+# domínio de `PHX_HOST` já aponte para o IP desta máquina.
+{$PHX_HOST} {
+	encode zstd gzip
+
+	# O Caddy manda `X-Forwarded-Proto: https`, que é o que o `force_ssl` do
+	# Phoenix lê (`rewrite_on: [:x_forwarded_proto]`) para não entrar em laço
+	# de redirecionamento.
+	reverse_proxy app:4000
+}
