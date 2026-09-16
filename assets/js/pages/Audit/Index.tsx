@@ -6,6 +6,7 @@ import {
   Ban,
   Bike,
   CheckCheck,
+  Coins,
   PackagePlus,
   Pencil,
   Receipt,
@@ -62,6 +63,11 @@ const LOOK: Record<
     icon: SlidersHorizontal,
     tone: "text-amber-600 dark:text-amber-400",
     label: "Ajuste",
+  },
+  stock_cost_corrected: {
+    icon: Coins,
+    tone: "text-amber-600 dark:text-amber-400",
+    label: "Custo corrigido",
   },
   product_created: {
     icon: PackagePlus,

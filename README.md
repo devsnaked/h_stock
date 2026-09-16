@@ -21,8 +21,8 @@ balcão; `entregador` só recebe os pedidos prontos e marca a entrega. O admin
 pode liberar a um funcionário específico a permissão de gerenciar o estoque
 (`can_manage_stock`), a de gerenciar os pedidos de toda a equipe
 (`can_manage_orders`) e a de abrir o painel da loja (`can_view_dashboard`) —
-esta última **seção por seção** (`dashboard_sections`): vendas, horários,
-produtos, equipe, entrega, estoque e últimos pedidos são sete interruptores
+esta última **seção por seção** (`dashboard_sections`): mapa, vendas, horários,
+produtos, equipe, entrega, estoque e últimos pedidos são oito interruptores
 independentes. A tela de Equipe tem todos eles.
 
 **Estoque a peso, em lotes.** Produtos são vendidos por grama ou quilo.
@@ -30,7 +30,9 @@ Internamente **tudo é grama** (`Decimal`); a unidade do produto diz só como el
 é digitado e exibido, e preço e custo são sempre guardados por grama. Cada
 entrada de mercadoria abre um **lote** com o custo pago, e lotes não se
 misturam: duas compras do mesmo produto por preços diferentes continuam
-separadas. O saldo nunca é editado direto — entradas, saídas, devoluções e
+separadas. O custo de um lote pode ser corrigido depois (digitou errado a nota,
+por exemplo) — vale para o que ainda vai sair dele, e a correção fica no log de
+auditoria; o que já foi vendido guarda o custo que tinha na hora. O saldo nunca é editado direto — entradas, saídas, devoluções e
 ajustes viram linhas em `stock_movements`, com autor, lote e motivo, na mesma
 transação que muda o saldo.
 
@@ -49,8 +51,10 @@ balcão manda para um entregador — na hora da venda ou depois, pela tela do
 pedido. Ele abre `/entregas` no celular, vê o que está com ele, traça a rota e
 marca a saída e a chegada.
 
-**Painel com gráficos, por categoria.** O resumo do período vira análise:
-vendas e lucro por dia, movimento por hora, o que mais vendeu, quem registrou,
+**Painel com gráficos, por categoria.** O resumo do período vira análise: o
+mapa de onde os pedidos foram parar (um pino por endereço, o balão com os
+pedidos daquele ponto), vendas e lucro por dia, movimento por hora, o que mais
+vendeu, quem registrou,
 como anda a entrega (incluindo tempo médio e desempenho por entregador), o que
 foi cancelado e onde o dinheiro está parado no estoque. Cada gráfico traz a
 tabela dos números junto. **Cada categoria busca o próprio dado quando chega
@@ -94,26 +98,40 @@ mix setup                                        # deps, banco, seeds, assets
 mix phx.server                                   # http://localhost:4000
 ```
 
-Os seeds criam os acessos iniciais e alguns produtos de exemplo:
+**Em produção os seeds criam um único usuário: o administrador** — é o que o
+sistema não consegue criar por dentro, já que não há cadastro público. **Em
+desenvolvimento eles criam também a loja de exemplo** (`Core.Demo`): tela vazia
+não se avalia.
 
-| Login          | Senha       | Perfil      |
-| -------------- | ----------- | ----------- |
-| `admin`        | `Pass@123!` | admin       |
-| `funcionario`  | `Pass@123!` | funcionário |
-| `entregador`   | `Pass@123!` | entregador  |
+| Login         | Senha             | Perfil                     |
+| ------------- | ----------------- | -------------------------- |
+| `admin`       | sorteada, ver ↓   | admin                      |
+| `funcionario` | `Pass@123!`       | funcionário, painel aberto |
+| `entregador`  | `Pass@123!`       | entregador                 |
 
-O admin é a única parte indispensável do seed: como não há cadastro público,
-sem ele não existe forma de entrar e criar os outros usuários. Três variáveis
-ajustam isso:
+Sem `ADMIN_PASSWORD`, a senha do admin é **sorteada e mostrada uma única vez**,
+no fim da saída do comando — guarde-a antes de fechar o terminal. Uma senha
+padrão escrita no repositório seria uma senha pública.
 
 ```sh
-ADMIN_NICKNAME=chefe ADMIN_PASSWORD='umaSenhaBoa' SEED_DEMO=false \
-  mix run priv/repo/seeds.exs
+mix run priv/repo/seeds.exs                              # senha sorteada
+ADMIN_NICKNAME=chefe ADMIN_PASSWORD='umaSenhaBoa' \
+  mix run priv/repo/seeds.exs                            # senha escolhida
 ```
 
-`SEED_DEMO=false` pula o funcionário, o entregador e os produtos de exemplo — é o que se usa
-fora de desenvolvimento. Os seeds são idempotentes e não mexem em quem já
-existe, então rodar de novo não reverte uma senha trocada.
+Rodar de novo não duplica nada nem reverte uma senha trocada depois. E o
+primeiro login pede a verificação em duas etapas: tenha o aplicativo
+autenticador à mão (ou suba com `TOTP_REQUIRED=false mix phx.server`).
+
+Para o painel ter o que mostrar — ele só desenha onde houve venda — falta o
+movimento, e ele sai de uma tarefa:
+
+```sh
+mix demo.orders            # um mês de vendas, com entregas e cancelamentos
+mix demo.orders --dias 60
+```
+
+Ela também cria o que faltar do elenco, e não roda em produção.
 
 Serviços de desenvolvimento:
 
@@ -214,8 +232,15 @@ desliga o 2FA dela na tela de Equipe (editar pessoa).
 A exigência é uma chave de configuração (`config :h_stock, :totp_required`,
 ou `TOTP_REQUIRED=false`): desligada, ninguém é parado no login nem levado
 para a ativação — mas nada é apagado, e religar volta a pedir o mesmo código.
-**Em desenvolvimento ela está desligada** (`config/dev.exs`); em produção vale
-o padrão, que é exigir.
+**Ela está ligada em todos os ambientes**; desligar é uma exceção pontual
+(`TOTP_REQUIRED=false mix phx.server`), não o padrão de desenvolvimento.
+
+O nome que o autenticador mostra ao lado da conta é `TOTP_ISSUER`
+(`config :h_stock, :totp_issuer`, padrão `Mercado`) — de propósito não é
+"h_stock": a tela do autenticador é lida em qualquer lugar e não precisa
+anunciar o sistema da loja. É rótulo, não segredo: trocá-lo não invalida
+ativação nenhuma, e o nome antigo só sai do aplicativo de quem já ativou
+quando essa pessoa ativar de novo.
 
 Duas garantias que valem conhecer antes de mexer nesse código:
 
@@ -243,6 +268,7 @@ Nunca escreva migration à mão: altere o recurso e rode `ash.codegen`.
 ```sh
 mix test               # testes
 mix precommit          # compila com warnings-as-errors, formata e testa
+mix demo.orders        # loja de exemplo: catálogo, equipe e vendas (só fora de produção)
 mix assets.build       # build de CSS/JS
 mix assets.deploy      # build minificado + digest (produção)
 npm --prefix assets run check   # typecheck do TypeScript
@@ -256,37 +282,107 @@ arquivo no volume `h_stock_data`** — é o sistema inteiro. SQLite não é serv
 de banco: não dá para pôr duas máquinas na frente do mesmo arquivo, e o
 tamanho do disco é o limite.
 
-Na máquina, com Docker instalado e o domínio já apontando para o IP dela:
+No servidor só é preciso ter **Docker** e as portas 80 e 443 abertas. Nada de
+código, Elixir ou Node: a imagem chega pronta.
+
+**Sem domínio, o endereço sai do próprio IP.** `203.0.113.10` vira
+`PHX_HOST=203-0-113-10.sslip.io`: o [sslip.io](https://sslip.io) é um DNS
+público e gratuito que devolve o IP embutido no nome, sem nada para registrar
+ou administrar. Ele está aqui por um motivo prático — o Caddy precisa de um
+**nome** para pedir o certificado, o Let's Encrypt não emite para IP pelado, e
+sem certificado a senha e o código do 2FA viajariam em texto claro. Com o
+`PHX_HOST` ainda no valor de exemplo, o `deploy.sh` para e diz qual nome pôr
+para o servidor daquele `deploy.env`; e avisa se o nome apontar para um IP
+diferente daquele para onde você está entregando. (Se um dia o Let's Encrypt recusar por limite do
+serviço, `nip.io` funciona no mesmo formato.)
+
+Com domínio próprio é a mesma linha, com o domínio já apontando para o IP
+antes da primeira subida.
+
+### `./deploy.sh`
+
+Do seu computador:
+
+```sh
+cp .env.prod.example .env.prod       # segredos da aplicação
+cp deploy.env.example deploy.env     # onde entregar (host, usuário, senha/chave)
+mix phx.gen.secret                   # duas vezes: SECRET_KEY_BASE e TOKEN_SIGNING_SECRET
+$EDITOR .env.prod deploy.env
+
+./deploy.sh --seed                   # primeira vez: sobe e cria o admin
+./deploy.sh                          # daí em diante
+```
+
+Nenhum dos dois arquivos vai para o git.
+
+O script constrói a imagem aqui, envia **comprimida direto para o Docker do
+servidor** (`docker save | gzip | ssh | docker load` — não sobra tarball em
+lugar nenhum), copia `docker-compose.prod.yml`, `Caddyfile` e `.env.prod`
+(este com permissão 600), sobe, **espera o healthcheck** e limpa as imagens
+antigas de lá. Volume nenhum é tocado: é onde o banco mora.
+
+- Já enviou esta versão? Ele pula build e envio. `--force` refaz. Árvore suja
+  (`-dirty` na tag) nunca é pulada.
+- `--seed` roda os seeds no fim — é o que cria o admin de
+  `ADMIN_NICKNAME`/`ADMIN_PASSWORD` (sem a segunda, sorteia a senha e a
+  imprime uma única vez). Idempotente: com o admin já criado, não faz nada.
+- Deu errado? O script mostra o log e o comando de rollback: a versão que
+  estava no ar fica marcada como `h_stock:previous`.
+
+Autenticação por **chave SSH** é o padrão (`SSH_KEY`, ou as chaves que o seu
+`ssh` já usa sozinho). `SERVER_PASSWORD` funciona, mas precisa do `sshpass`
+instalado aqui — e um servidor que aceita senha no SSH é um servidor a menos
+de uma senha de distância.
+
+### Desmontar: `./teardown.sh`
+
+Tira o h_stock do servidor — **trazendo o banco antes**:
+
+```sh
+./teardown.sh                       # baixa o backup, pergunta, e desmonta
+./teardown.sh --saida ~/loja.db     # escolhe onde salvar
+./teardown.sh --sem-backup          # quando não há o que salvar
+```
+
+A ordem é o ponto: o `bin/backup` roda no servidor, o arquivo vem direto do
+container para o seu disco (nada fica lá), e aqui ele é conferido — tamanho e
+assinatura de arquivo SQLite — **antes** de qualquer coisa ser apagada. Só
+então caem containers, volumes, imagens e o `REMOTE_DIR` inteiro, `.env.prod`
+incluído. Sem `-y`, ele ainda pede que você digite o endereço do servidor.
+
+O padrão é `backups/h_stock-<data>.db`, que não vai para o git.
+
+**Para voltar de um backup**, com a pilha no ar (o `stop` evita escrita
+concorrente, e o `-wal`/`-shm` do banco vazio precisa sair junto):
+
+```sh
+scp backups/h_stock-….db root@SERVIDOR:/tmp/restaurar.db
+ssh root@SERVIDOR
+cd /opt/h_stock
+vol=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' h_stock)
+docker compose -f docker-compose.prod.yml stop app
+docker run --rm -i -v "$vol":/data h_stock:latest \
+  sh -c 'cat > /data/h_stock.db && rm -f /data/h_stock.db-wal /data/h_stock.db-shm' < /tmp/restaurar.db
+docker compose -f docker-compose.prod.yml start app && rm /tmp/restaurar.db
+```
+
+### Na mão, sem o script
 
 ```sh
 git clone git@github.com:devsnaked/h_stock.git && cd h_stock
-cp .env.prod.example .env.prod
-mix phx.gen.secret        # duas vezes: SECRET_KEY_BASE e TOKEN_SIGNING_SECRET
-$EDITOR .env.prod         # PHX_HOST, os dois segredos e a senha do admin
-
+cp .env.prod.example .env.prod && $EDITOR .env.prod
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec app /app/bin/seed   # só na 1ª vez
 ```
 
 O container **migra sozinho antes de subir** (`rel/overlays/bin/start`), então
-uma atualização é só:
+atualizar é `git pull` e o mesmo `up -d --build`.
 
-```sh
-git pull && docker compose -f docker-compose.prod.yml up -d --build
-```
+### Detalhes que valem saber
 
-`bin/seed` roda o mesmo `priv/repo/seeds.exs` do desenvolvimento e cria o
-admin de `ADMIN_NICKNAME`/`ADMIN_PASSWORD` — com `SEED_DEMO=false` no
-`.env.prod`, é só ele. É idempotente: rodar de novo não reverte a senha depois
-de trocada no sistema.
-
-O que o `.env.prod` precisa está comentado no `.env.prod.example`; o
-essencial é `PHX_HOST`, `SECRET_KEY_BASE` e `TOKEN_SIGNING_SECRET` (sem os
-dois últimos a aplicação se recusa a subir, de propósito). **Trocar o
-`TOKEN_SIGNING_SECRET` desconecta todo mundo.**
-
-Detalhes que valem saber:
-
+- O essencial do `.env.prod` é `PHX_HOST`, `SECRET_KEY_BASE` e
+  `TOKEN_SIGNING_SECRET` — sem os dois últimos a aplicação se recusa a subir,
+  de propósito. **Trocar o `TOKEN_SIGNING_SECRET` desconecta todo mundo.**
 - **`/health`** responde `ok` sem autenticação e consulta o banco. É o
   healthcheck do container e o que o Caddy espera antes de repassar.
 - **Backup é uma cópia do arquivo — mas não com `cp`.** Com o WAL ligado, uma

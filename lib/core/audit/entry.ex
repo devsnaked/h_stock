@@ -105,6 +105,7 @@ defmodule Core.Audit.Entry do
                     :stock_out,
                     :stock_return,
                     :stock_adjusted,
+                    :stock_cost_corrected,
                     :order_registered,
                     :order_cancelled,
                     :order_driver_assigned,

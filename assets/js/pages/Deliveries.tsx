@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DeliveryBadge } from "@/components/DeliveryBadge";
+import { OrdersMap } from "@/components/OrdersMap";
 import { dateTimeLabel, money, weight } from "@/lib/format";
 import type { Order } from "@/types";
 
@@ -27,6 +28,12 @@ export default function Deliveries({ orders, deliveredToday }: Props) {
   const onTheWay = orders.filter((order) => order.deliveryStatus === "out_for_delivery");
   const waiting = orders.filter((order) => order.deliveryStatus === "pending");
 
+  // Endereço sem coordenada não vira ponto — o cartão continua mostrando o
+  // texto, que é o que dá para seguir.
+  const located = orders.filter(
+    (order) => order.deliveryLat !== null && order.deliveryLon !== null,
+  );
+
   return (
     <AppLayout
       title="Minhas entregas"
@@ -42,6 +49,11 @@ export default function Deliveries({ orders, deliveredToday }: Props) {
           <Tally label="A caminho" value={onTheWay.length} icon={Bike} />
           <Tally label="Entregues hoje" value={deliveredToday} icon={CheckCheck} />
         </div>
+
+        {/* Onde é cada uma, antes da lista: a primeira pergunta de quem abre
+            esta tela é para que lado sair. O balão de cada ponto tem o
+            cliente, o valor e a rota. */}
+        {located.length > 0 && <OrdersMap orders={located} route />}
 
         {orders.length === 0 ? (
           <Card>

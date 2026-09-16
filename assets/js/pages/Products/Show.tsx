@@ -3,6 +3,7 @@ import { Link, router, useForm } from "@inertiajs/react";
 import {
   ArrowDownRight,
   ArrowUpRight,
+  Coins,
   Layers,
   Minus,
   Pencil,
@@ -33,9 +34,9 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   dateTimeLabel,
   money,
+  moneyInput,
   parseNumber,
   priceIn,
-  remaskMoney,
   toGrams,
   unitLabel,
   unitPrice,
@@ -314,6 +315,7 @@ const BatchRow: React.FC<{ product: Product; batch: Batch; managesStock: boolean
         <div className="flex gap-2 pt-3">
           <MovementDialog product={product} batch={batch} kind="out" />
           <MovementDialog product={product} batch={batch} kind="adjustment" />
+          <CostDialog product={product} batch={batch} />
         </div>
       )
     )}
@@ -342,16 +344,12 @@ const EntryDialog: React.FC<{ product: Product }> = ({ product }) => {
   const totalCost =
     quantity !== null && cost !== null && quantity > 0 && cost > 0 ? quantity * cost : null;
 
-  // Por grama o custo mora na terceira casa; por kg são centavos.
-  const decimals = unit === "kg" ? 2 : 4;
-
+  // A unidade diz em que o peso é digitado, e com ele o que o custo
+  // significa (por kg ou por grama). O dinheiro em si é sempre reais e
+  // centavos, então o número digitado fica como está.
   const chooseUnit = (next: Unit) => {
     setUnit(next);
-    setData((current) => ({
-      ...current,
-      unit: next,
-      cost: remaskMoney(current.cost, next === "kg" ? 2 : 4),
-    }));
+    setData("unit", next);
   };
 
   const submit = (event: React.FormEvent) => {
@@ -426,7 +424,6 @@ const EntryDialog: React.FC<{ product: Product }> = ({ product }) => {
             <MoneyInput
               id="cost"
               required
-              decimals={decimals}
               value={data.cost}
               onChange={(value) => setData("cost", value)}
               aria-invalid={Boolean(errors.cost ?? errors.cost_per_gram)}
@@ -449,6 +446,119 @@ const EntryDialog: React.FC<{ product: Product }> = ({ product }) => {
             </DialogClose>
             <Button type="submit" disabled={processing}>
               {processing ? "Salvando..." : "Registrar entrada"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+/**
+ * Correção do custo de um lote — inclusive o do estoque inicial, que só podia
+ * ser digitado no cadastro do produto.
+ *
+ * É conserto de número, não movimentação: o peso não muda, e por isso não
+ * aparece no histórico do produto (aparece no log de auditoria, com o antes e
+ * o depois). Vale daqui para a frente: o que já foi vendido deste lote copiou
+ * o custo dele para o item do pedido, e o lucro de um pedido fechado não se
+ * reescreve.
+ */
+const CostDialog: React.FC<{ product: Product; batch: Batch }> = ({ product, batch }) => {
+  const [open, setOpen] = React.useState(false);
+  const [unit, setUnit] = React.useState<Unit>(product.unit);
+
+  const atual = batch.costPerGram ?? 0;
+
+  const form = useForm({
+    unit: product.unit as Unit,
+    cost: moneyInput(priceIn(atual, product.unit)),
+    reason: "",
+  });
+
+  const { data, setData, post, processing, reset } = form;
+  const errors = fieldErrors(form.errors);
+
+  // Trocar a unidade converte o que está digitado: R$ 38,00/kg é R$ 0,04/g.
+  const chooseUnit = (next: Unit) => {
+    const digitado = parseNumber(data.cost);
+    const porGrama = digitado === null ? null : unit === "kg" ? digitado / 1000 : digitado;
+
+    setUnit(next);
+    setData((current) => ({
+      ...current,
+      unit: next,
+      cost: porGrama === null ? current.cost : moneyInput(priceIn(porGrama, next)),
+    }));
+  };
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    post(`/produtos/${product.id}/lotes/${batch.id}/custo`, {
+      onSuccess: () => {
+        reset();
+        setOpen(false);
+      },
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="flex-1">
+          <Coins className="size-4" />
+          Custo
+        </Button>
+      </DialogTrigger>
+
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Corrigir o custo do lote</DialogTitle>
+          <DialogDescription>
+            {batch.label} · hoje a {unitPrice(priceIn(atual, product.unit))} por{" "}
+            {unitLabel(product.unit)}.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form className="space-y-4" onSubmit={submit}>
+          <Field
+            label={`Custo por ${unitLabel(unit)}`}
+            htmlFor={`cost-${batch.id}`}
+            error={errors.cost ?? errors.cost_per_gram}
+            hint="Vale para o que ainda vai sair deste lote. As vendas já registradas guardam o custo que tinham na hora."
+          >
+            <div className="space-y-2">
+              <MoneyInput
+                id={`cost-${batch.id}`}
+                required
+                value={data.cost}
+                onChange={(value) => setData("cost", value)}
+                aria-invalid={Boolean(errors.cost ?? errors.cost_per_gram)}
+              />
+              <UnitToggle value={unit} onChange={chooseUnit} />
+            </div>
+          </Field>
+
+          <Field
+            label="Motivo"
+            htmlFor={`cost-reason-${batch.id}`}
+            hint="Opcional, mas é o que explica a correção na auditoria."
+          >
+            <Textarea
+              id={`cost-reason-${batch.id}`}
+              rows={2}
+              placeholder="Nota fiscal veio com outro valor..."
+              value={data.reason}
+              onChange={(e) => setData("reason", e.target.value)}
+            />
+          </Field>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button type="submit" disabled={processing}>
+              {processing ? "Salvando..." : "Corrigir"}
             </Button>
           </DialogFooter>
         </form>

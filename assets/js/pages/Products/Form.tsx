@@ -8,7 +8,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { Field } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { UnitToggle } from "@/components/UnitToggle";
-import { moneyInput, priceIn, remaskMoney, unitLabel } from "@/lib/format";
+import { moneyInput, priceIn, unitLabel } from "@/lib/format";
 import { fieldErrors } from "@/lib/errors";
 import type { Product, Unit } from "@/types";
 
@@ -27,13 +27,6 @@ type Form = {
   active: boolean;
 };
 
-/**
- * Casas da máscara de dinheiro. Por kg são centavos; por grama o preço mora
- * na terceira e quarta casa (R$ 0,0620/g = R$ 62,00/kg), e arredondar ali
- * mudaria o preço do produto.
- */
-const moneyDecimals = (unit: Unit) => (unit === "kg" ? 2 : 4);
-
 export default function ProductForm({ product }: Props) {
   const editing = product !== null;
 
@@ -41,7 +34,7 @@ export default function ProductForm({ product }: Props) {
     name: product?.name ?? "",
     unit: product?.unit ?? "kg",
     price: product
-      ? moneyInput(priceIn(product.pricePerGram, product.unit), moneyDecimals(product.unit))
+      ? moneyInput(priceIn(product.pricePerGram, product.unit))
       : "",
     min_stock: product
       ? String(product.unit === "kg" ? product.minStockGrams / 1000 : product.minStockGrams)
@@ -54,20 +47,11 @@ export default function ProductForm({ product }: Props) {
 
   const { data, setData, post, put, processing } = form;
   const errors = fieldErrors(form.errors);
-  const decimals = moneyDecimals(data.unit);
 
-  // Trocar a unidade não muda o número digitado, só quantas casas ele mostra:
-  // 62,00 por kg passa a 62,0000 por grama, e quem digitou decide o resto.
-  const chooseUnit = (unit: Unit) => {
-    const next = moneyDecimals(unit);
-
-    setData((current) => ({
-      ...current,
-      unit,
-      price: remaskMoney(current.price, next),
-      initial_cost: remaskMoney(current.initial_cost, next),
-    }));
-  };
+  // Trocar a unidade troca o que o número quer dizer (62,00 por kg não é
+  // 62,00 por grama), mas não o número: quem digitou decide o resto. Dinheiro
+  // é sempre reais e centavos, nas duas.
+  const chooseUnit = (unit: Unit) => setData("unit", unit);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -117,7 +101,6 @@ export default function ProductForm({ product }: Props) {
               <MoneyInput
                 id="price"
                 required
-                decimals={decimals}
                 value={data.price}
                 onChange={(value) => setData("price", value)}
                 aria-invalid={Boolean(errors.price_per_gram ?? errors.price)}
@@ -166,7 +149,6 @@ export default function ProductForm({ product }: Props) {
                 >
                   <MoneyInput
                     id="initial_cost"
-                    decimals={decimals}
                     value={data.initial_cost}
                     onChange={(value) => setData("initial_cost", value)}
                   />

@@ -8,6 +8,23 @@ defmodule Web.DashboardControllerTest do
   alias Core.Clock
   alias Core.Orders
 
+  defp sale_com_entrega(actor, product, opts) do
+    {:ok, order} =
+      Orders.register_order(
+        %{
+          items: [sale_item(product, 100)],
+          customer_name: Keyword.get(opts, :customer, "Dona Rita"),
+          delivery_status: :pending,
+          delivery_address: Keyword.get(opts, :address, "Rua das Flores, 100"),
+          delivery_lat: Decimal.new(Keyword.get(opts, :lat, "-23.55")),
+          delivery_lon: Decimal.new(Keyword.get(opts, :lon, "-46.63"))
+        },
+        actor: actor
+      )
+
+    order
+  end
+
   defp sale(actor, product, grams \\ 100) do
     {:ok, order} =
       Orders.register_order(
@@ -91,9 +108,31 @@ defmodule Web.DashboardControllerTest do
       # quais blocos existem para buscar.
       assert Map.has_key?(props, :sections)
 
-      for categoria <- [:sales, :hours, :products, :team, :delivery, :stock, :recent] do
+      for categoria <- [:map, :sales, :hours, :products, :team, :delivery, :stock, :recent] do
         refute Map.has_key?(props, categoria)
       end
+    end
+
+    test "o mapa leva só os pedidos que têm coordenada", %{
+      conn: conn,
+      admin: admin,
+      product: product
+    } do
+      entrega = sale_com_entrega(admin, product, [])
+      # Retirada no balcão: não tem endereço, então não tem ponto.
+      sale(admin, product, 100)
+
+      props = inertia_props(get_partial(conn, ~p"/", "Dashboard", ["map"]))
+
+      assert [ponto] = props.map
+      assert ponto.id == entrega.id
+      assert ponto.customerName == "Dona Rita"
+      assert ponto.deliveryAddress == "Rua das Flores, 100"
+      assert ponto.deliveryLat == -23.55
+      assert ponto.deliveryLon == -46.63
+      # O balão mostra o estado da entrega e o valor; os dois vêm daqui.
+      assert ponto.deliveryStatus == :pending
+      assert ponto.total > 0
     end
 
     test "cada categoria é buscada sozinha", %{conn: conn, admin: admin, product: product} do

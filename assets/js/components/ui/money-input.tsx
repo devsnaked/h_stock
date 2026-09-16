@@ -10,11 +10,6 @@ type MoneyInputProps = Omit<
   /** Valor canônico do formulário: vírgula decimal, sem separador de milhar. */
   value: string;
   onChange: (value: string) => void;
-  /**
-   * Casas decimais da máscara. Duas para dinheiro; quatro para preço e custo
-   * por grama, onde os centavos escondem a diferença entre 0,062 e 0,068.
-   */
-  decimals?: number;
 };
 
 /**
@@ -24,16 +19,20 @@ type MoneyInputProps = Omit<
  * "0,06", "0,62", "6,20", "62,00" — então não há vírgula para acertar no
  * teclado do celular, nem como digitar letra ou dois separadores.
  *
+ * Sempre reais e centavos, duas casas: é o que se escreve num preço no
+ * Brasil. Preço por grama abaixo de um centavo não cabe aqui — esse produto
+ * se cadastra por kg, que é como ele é falado no balcão de qualquer forma.
+ *
  * O que vai para o `onChange` é sempre o valor canônico ("1234,56"); o
  * separador de milhar existe só na tela. O servidor recebe o mesmo formato
  * que já recebia de um input solto.
  */
 const MoneyInput = React.forwardRef<HTMLInputElement, MoneyInputProps>(
-  ({ className, value, onChange, decimals = 2, ...props }, ref) => {
+  ({ className, value, onChange, ...props }, ref) => {
     const inner = React.useRef<HTMLInputElement | null>(null);
 
     const handle = (event: React.ChangeEvent<HTMLInputElement>) => {
-      onChange(maskMoney(event.target.value, decimals));
+      onChange(maskMoney(event.target.value));
 
       // A máscara reescreve o campo inteiro a cada tecla; sem isto o cursor
       // pularia para o começo no meio da digitação em alguns navegadores.
@@ -56,9 +55,9 @@ const MoneyInput = React.forwardRef<HTMLInputElement, MoneyInputProps>(
             else if (ref) ref.current = node;
           }}
           inputMode="numeric"
-          value={moneyDisplay(value, decimals)}
+          value={moneyDisplay(value)}
           onChange={handle}
-          placeholder={moneyDisplay("0", decimals)}
+          placeholder={moneyDisplay("0")}
           className={cn("pl-9 tabular-nums", className)}
           {...props}
         />

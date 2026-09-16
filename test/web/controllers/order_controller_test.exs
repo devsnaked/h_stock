@@ -140,6 +140,36 @@ defmodule Web.OrderControllerTest do
       assert Decimal.equal?(order.delivery_lon, "-46.633308")
     end
 
+    test "a venda já sai com entregador quando o balcão escolhe um", %{
+      conn: conn,
+      product: product
+    } do
+      driver = driver_fixture(name: "Joana Correia")
+
+      conn =
+        post(conn, ~p"/pedidos", %{
+          "items" => [
+            %{
+              "product_id" => product.id,
+              "batch_id" => batch_of(product).id,
+              "quantity" => "100",
+              "unit" => "g"
+            }
+          ],
+          "delivery_address" => "Rua das Flores, 100",
+          "driver_id" => driver.id
+        })
+
+      assert %{id: id} = redirected_params(conn)
+      order = Ash.get!(Orders.Order, id, authorize?: false)
+
+      assert order.driver_id == driver.id
+      # Despachado na venda, mas ainda não saiu: quem marca a saída é quem
+      # está com a mercadoria.
+      assert order.delivery_status == :pending
+      assert order.assigned_at
+    end
+
     test "retirada no balcão não guarda endereço", %{conn: conn, product: product} do
       conn =
         post(conn, ~p"/pedidos", %{

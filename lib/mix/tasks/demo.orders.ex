@@ -13,6 +13,10 @@ defmodule Mix.Tasks.Demo.Orders do
   em estágios diferentes, algumas retiradas no balcão e alguns cancelamentos —
   é o que faz cada gráfico ter forma.
 
+  A loja de exemplo vem inteira: se faltarem produtos, funcionário ou
+  entregador, a tarefa os cria antes de vender (`Core.Demo`, senha
+  `Pass@123!`) — os mesmos que os seeds criam em desenvolvimento.
+
   **Só roda fora de produção.** E é aditivo: rodar duas vezes gera mais
   vendas, não repõe as anteriores.
 
@@ -45,6 +49,8 @@ defmodule Mix.Tasks.Demo.Orders do
     # Mesma semente sempre: rodar de novo dá a mesma loja, o que ajuda a
     # comparar duas versões da tela.
     :rand.seed(:exsss, {42, 42, 42})
+
+    ensure_demo_cast()
 
     employees = employees()
     drivers = drivers()
@@ -199,6 +205,15 @@ defmodule Mix.Tasks.Demo.Orders do
   defp put_when(fields, nil, _key, _value), do: fields
   defp put_when(fields, _existing, key, value), do: Keyword.put(fields, key, value)
 
+  # A equipe e o catálogo do exemplo são os mesmos que os seeds criam em
+  # desenvolvimento — moram no `Core.Demo` para não existirem em dois lugares.
+  defp ensure_demo_cast do
+    case Core.Demo.admin() do
+      nil -> Mix.raise("Nenhum administrador. Rode `mix run priv/repo/seeds.exs` antes.")
+      admin -> Core.Demo.ensure_cast(admin)
+    end
+  end
+
   defp employees do
     case Ash.read!(User, authorize?: false) |> Enum.filter(&(&1.role in [:admin, :employee])) do
       [] -> Mix.raise("Nenhum usuário de balcão. Rode `mix run priv/repo/seeds.exs` antes.")
@@ -219,10 +234,6 @@ defmodule Mix.Tasks.Demo.Orders do
       Product
       |> Ash.Query.filter(active == true)
       |> Ash.read!(authorize?: false)
-
-    if products == [] do
-      Mix.raise("Nenhum produto cadastrado. Rode `mix run priv/repo/seeds.exs` antes.")
-    end
 
     Enum.map(products, fn product ->
       {:ok, product} =

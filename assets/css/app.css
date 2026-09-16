@@ -242,3 +242,27 @@
 .leaflet-bar a:hover {
   background: var(--accent);
 }
+
+/* Balão e etiqueta do ponto. O Leaflet os desenha brancos, por fora do tema —
+   no escuro isso vira uma mancha clara no meio do mapa. */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip,
+.leaflet-tooltip {
+  background: var(--card);
+  color: var(--foreground);
+  border-color: var(--border);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 15%);
+}
+
+.leaflet-popup-content {
+  margin: 0.75rem;
+}
+
+/* A setinha da etiqueta é desenhada com borda; ela também segue o tema. */
+.leaflet-tooltip-top::before {
+  border-top-color: var(--card);
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--muted-foreground);
+}

@@ -141,6 +141,16 @@ config :elixir, :time_zone_database, Tz.TimeZoneDatabase
 # segundos. O login continua valendo — o que fecha é o conteúdo.
 config :h_stock, :totp_revalidation_seconds, 3600
 
+# O nome que o aplicativo autenticador mostra ao lado da conta. Não é
+# "h_stock" de propósito: a tela do autenticador é lida em qualquer lugar, e
+# ela não precisa anunciar qual é o sistema da loja. Ajustável por
+# `TOTP_ISSUER` (ver `config/runtime.exs`).
+#
+# Trocar o nome não invalida nada: quem já ativou continua com o mesmo
+# segredo, e o rótulo antigo segue no aplicativo dessa pessoa até ela ativar
+# de novo.
+config :h_stock, :totp_issuer, "Mercado"
+
 # A verificação em duas etapas é obrigatória? Ligado é o padrão, e é o que
 # deve valer em produção: sem isso, uma senha vazada basta para entrar.
 #

@@ -20,7 +20,7 @@ export default function SignIn() {
     setData("user", { ...data.user, [key]: value });
 
   return (
-    <AuthLayout title="h_stock" showHeader={false}>
+    <AuthLayout showHeader={false}>
       <form
         className="space-y-4"
         onSubmit={(event) => {

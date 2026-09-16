@@ -30,6 +30,8 @@ config :h_stock, :timezone, System.get_env("TIMEZONE", "America/Sao_Paulo")
 
 config :h_stock, :totp_required, System.get_env("TOTP_REQUIRED", "true") == "true"
 
+config :h_stock, :totp_issuer, System.get_env("TOTP_ISSUER", "Mercado")
+
 # O Nominatim (OpenStreetMap) exige um `User-Agent` que identifique a
 # aplicação; em produção vale pôr um contato real, é o que a política de uso
 # deles pede.

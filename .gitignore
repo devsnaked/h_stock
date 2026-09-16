@@ -44,3 +44,5 @@ npm-debug.log
 
 # Segredos de produção.
 .env.prod
+deploy.env
+backups/

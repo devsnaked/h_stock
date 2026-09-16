@@ -190,6 +190,85 @@ defmodule Core.InventoryTest do
     end
   end
 
+  describe "correção do custo do lote" do
+    test "corrige o custo e não mexe no saldo" do
+      admin = admin_fixture()
+      product = product_fixture(stock_grams: 500, cost_per_gram: "0.02")
+      lote = batch_of(product)
+
+      assert {:ok, corrigido} =
+               Inventory.correct_batch_cost(lote, Decimal.new("0.035"), %{reason: "Nota fiscal"},
+                 actor: admin
+               )
+
+      assert Decimal.equal?(corrigido.cost_per_gram, Decimal.new("0.035"))
+      # Corrigir custo não é movimentar: o peso do lote e do produto fica.
+      assert Decimal.equal?(corrigido.remaining_grams, 500)
+      assert Decimal.equal?(Ash.reload!(product, authorize?: false).stock_grams, 500)
+      assert [] == Inventory.list_movements_for_product!(product.id, actor: admin) |> tl()
+    end
+
+    test "o que já foi vendido guarda o custo que tinha na hora" do
+      admin = admin_fixture()
+      product = product_fixture(stock_grams: 500, cost_per_gram: "0.02", price_per_gram: "0.05")
+      lote = batch_of(product)
+
+      {:ok, order} =
+        Core.Orders.register_order(
+          %{items: [%{product_id: product.id, batch_id: lote.id, grams: Decimal.new(100)}]},
+          actor: admin
+        )
+
+      {:ok, _} = Inventory.correct_batch_cost(lote, Decimal.new("0.04"), %{}, actor: admin)
+
+      order = Ash.load!(order, [:items], authorize?: false)
+      [item] = order.items
+
+      # O item copiou o custo na venda: reescrevê-lo mudaria o lucro de um
+      # pedido fechado.
+      assert Decimal.equal?(item.cost_per_gram, Decimal.new("0.02"))
+    end
+
+    test "a correção entra no log de auditoria, com o antes e o depois" do
+      admin = admin_fixture()
+      product = product_fixture(stock_grams: 500, cost_per_gram: "0.02")
+
+      {:ok, _} =
+        Inventory.correct_batch_cost(
+          batch_of(product),
+          Decimal.new("0.03"),
+          %{reason: "Nota veio com desconto"},
+          actor: admin
+        )
+
+      assert %{action: :stock_cost_corrected} =
+               entrada =
+               Core.Audit.Entry
+               |> Ash.read!(actor: admin)
+               |> Enum.find(&(&1.action == :stock_cost_corrected))
+
+      assert entrada.details["cost_per_gram_before"] == "0.02"
+      assert entrada.details["cost_per_gram"] == "0.03"
+      assert entrada.summary =~ "corrigido"
+      assert entrada.summary =~ "Nota veio com desconto"
+      assert entrada.user_id == admin.id
+    end
+
+    test "funcionário comum não corrige custo; com can_manage_stock, corrige" do
+      product = product_fixture(stock_grams: 100, cost_per_gram: "0.02")
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               Inventory.correct_batch_cost(batch_of(product), Decimal.new("0.03"), %{},
+                 actor: user_fixture()
+               )
+
+      assert {:ok, _} =
+               Inventory.correct_batch_cost(batch_of(product), Decimal.new("0.03"), %{},
+                 actor: user_fixture(can_manage_stock: true)
+               )
+    end
+  end
+
   describe "valor em estoque" do
     test "soma o que sobrou de cada lote pelo custo dele" do
       admin = admin_fixture()

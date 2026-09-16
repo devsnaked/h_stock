@@ -347,11 +347,13 @@ const PermissionFields: React.FC<{
   onCanManageStock,
   onCanManageOrders,
 }) => {
-  // Entregador não tem permissão nenhuma para dar: ele recebe pedido e marca
-  // entrega. O domínio zera as duas de qualquer jeito
-  // (`NormalizePermissions`); aqui é para a tela não prometer o que não vai
-  // acontecer.
-  const driver = role === "driver";
+  // Só o funcionário tem o que escolher. O administrador já passa por cima de
+  // toda permissão no servidor (`Core.Accounts.Permissions`, os plugs e as
+  // policies), e o entregador tem todas zeradas pelo domínio
+  // (`NormalizePermissions`) — nos dois casos, um interruptor aqui seria um
+  // interruptor morto. Interruptor morto parece defeito, então em vez dele a
+  // tela diz o que vale.
+  const escolhe = role === "employee";
 
   return (
     <Card>
@@ -389,41 +391,36 @@ const PermissionFields: React.FC<{
 
         <p className="text-xs text-muted-foreground">{ROLE_HINT[role]}</p>
 
-        <label className="flex items-center justify-between gap-3">
-          <span className="space-y-0.5">
-            <span className="block text-sm font-medium">Gerenciar estoque</span>
-            <span className="block text-xs text-muted-foreground">
-              {role === "admin"
-                ? "Administradores já gerenciam o estoque."
-                : driver
-                  ? "Entregador não abre o estoque."
-                  : "Permite cadastrar produtos e movimentar o estoque."}
-            </span>
-          </span>
-          <Switch
-            checked={role === "admin" || (!driver && canManageStock)}
-            disabled={role === "admin" || driver}
-            onCheckedChange={onCanManageStock}
-          />
-        </label>
+        {escolhe ? (
+          <>
+            <label className="flex items-center justify-between gap-3">
+              <span className="space-y-0.5">
+                <span className="block text-sm font-medium">Gerenciar estoque</span>
+                <span className="block text-xs text-muted-foreground">
+                  Permite cadastrar produtos e movimentar o estoque.
+                </span>
+              </span>
+              <Switch checked={canManageStock} onCheckedChange={onCanManageStock} />
+            </label>
 
-        <label className="flex items-center justify-between gap-3">
-          <span className="space-y-0.5">
-            <span className="block text-sm font-medium">Gerenciar pedidos</span>
-            <span className="block text-xs text-muted-foreground">
-              {role === "admin"
-                ? "Administradores já enxergam os pedidos da loja."
-                : driver
-                  ? "Entregador só vê os pedidos que estão com ele."
-                  : "Enxerga, cancela e despacha os pedidos de toda a equipe — sem isso, só os que a própria pessoa registrou."}
-            </span>
-          </span>
-          <Switch
-            checked={role === "admin" || (!driver && canManageOrders)}
-            disabled={role === "admin" || driver}
-            onCheckedChange={onCanManageOrders}
-          />
-        </label>
+            <label className="flex items-center justify-between gap-3">
+              <span className="space-y-0.5">
+                <span className="block text-sm font-medium">Gerenciar pedidos</span>
+                <span className="block text-xs text-muted-foreground">
+                  Enxerga, cancela e despacha os pedidos de toda a equipe — sem isso, só
+                  os que a própria pessoa registrou.
+                </span>
+              </span>
+              <Switch checked={canManageOrders} onCheckedChange={onCanManageOrders} />
+            </label>
+          </>
+        ) : (
+          <p className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+            {role === "admin"
+              ? "Administrador não tem permissões para escolher: estoque, pedidos de toda a equipe e o painel inteiro já vêm com o perfil. Para liberar só uma parte, o perfil é Funcionário."
+              : "Entregador não tem permissões para escolher: ele abre apenas as entregas que estão com ele. Estoque, pedidos da equipe e painel ficam fora."}
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -440,6 +437,11 @@ const DASHBOARD_SECTIONS: {
   label: string;
   hint: string;
 }[] = [
+  {
+    value: "map",
+    label: "Mapa dos pedidos",
+    hint: "Onde os pedidos foram entregues — mostra o endereço dos clientes.",
+  },
   {
     value: "sales",
     label: "Vendas",
@@ -479,8 +481,9 @@ const ALL_SECTIONS = DASHBOARD_SECTIONS.map((section) => section.value);
  * Permissões do painel: a chave que abre a tela e, dentro dela, uma chave por
  * seção de dados.
  *
- * Liberar o painel marca todas as seções — painel aberto e vazio não serve a
- * ninguém, e desmarcar o que sobra é mais rápido que marcar de uma em uma.
+ * Só aparece para o funcionário: é dele a régua fina. Liberar o painel marca
+ * todas as seções — painel aberto e vazio não serve a ninguém, e desmarcar o
+ * que sobra é mais rápido que marcar de uma em uma.
  * Fechar o painel esconde as seções em vez de deixá-las marcadas à espera: o
  * domínio esvazia a lista de quem não abre a tela
  * (`NormalizePermissions`), e a tela não deve prometer o contrário.
@@ -492,9 +495,13 @@ const DashboardFields: React.FC<{
   onCanViewDashboard: (value: boolean) => void;
   onSections: (sections: DashboardSection[]) => void;
 }> = ({ role, canViewDashboard, sections, onCanViewDashboard, onSections }) => {
-  const admin = role === "admin";
-  const driver = role === "driver";
-  const open = admin || (!driver && canViewDashboard);
+  // O painel é escolha só do funcionário: administrador vê tudo por definição
+  // e entregador não abre a tela. Para esses dois o cartão inteiro sai — quem
+  // explica é o cartão de permissões, e oito interruptores travados aqui só
+  // pareceriam defeito.
+  if (role !== "employee") return null;
+
+  const open = canViewDashboard;
 
   const toggle = (section: DashboardSection, on: boolean) =>
     // Reconstrói pela ordem do painel, para a lista guardada ler como a tela.
@@ -514,16 +521,11 @@ const DashboardFields: React.FC<{
           <span className="space-y-0.5">
             <span className="block text-sm font-medium">Ver o painel</span>
             <span className="block text-xs text-muted-foreground">
-              {admin
-                ? "Administradores já veem o painel inteiro."
-                : driver
-                  ? "Entregador não abre o painel."
-                  : "Abre a tela inicial de análise. Sem isto, o dia começa nos pedidos."}
+              Abre a tela inicial de análise. Sem isto, o dia começa nos pedidos.
             </span>
           </span>
           <Switch
             checked={open}
-            disabled={admin || driver}
             onCheckedChange={(value) => {
               onCanViewDashboard(value);
               if (value && sections.length === 0) onSections(ALL_SECTIONS);
@@ -534,9 +536,8 @@ const DashboardFields: React.FC<{
         {open && (
           <div className="space-y-4 border-t border-border pt-4">
             <p className="text-xs text-muted-foreground">
-              {admin
-                ? "Todas as seções, por ser administrador."
-                : "Escolha o que aparece no painel. Seção desmarcada não é escondida na tela: ela não é calculada nem enviada."}
+              Escolha o que aparece no painel. Seção desmarcada não é escondida na
+              tela: ela não é calculada nem enviada.
             </p>
 
             {DASHBOARD_SECTIONS.map((section) => (
@@ -551,8 +552,7 @@ const DashboardFields: React.FC<{
                   </span>
                 </span>
                 <Switch
-                  checked={admin || sections.includes(section.value)}
-                  disabled={admin}
+                  checked={sections.includes(section.value)}
                   onCheckedChange={(value) => toggle(section.value, value)}
                 />
               </label>

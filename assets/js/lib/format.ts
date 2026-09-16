@@ -62,42 +62,34 @@ export function parseNumber(value: string): number | null {
  * separador de milhar, que é o formato que `Web.ControllerHelpers.to_decimal/1`
  * entende ("1.234,56" viraria erro de número).
  */
-export function maskMoney(input: string, decimals = 2): string {
+export function maskMoney(input: string): string {
   // 12 dígitos: R$ 9.999.999.999,99 é folgado para qualquer venda desta loja
   // e evita que segurar uma tecla vire um número absurdo.
   const digits = input.replace(/\D/g, "").slice(0, 12);
   if (digits === "") return "";
-  if (decimals <= 0) return String(Number(digits));
 
-  const padded = digits.padStart(decimals + 1, "0");
-  const whole = padded.slice(0, -decimals).replace(/^0+(?=\d)/, "");
+  const padded = digits.padStart(3, "0");
+  const whole = padded.slice(0, -2).replace(/^0+(?=\d)/, "");
 
-  return `${whole},${padded.slice(-decimals)}`;
+  return `${whole},${padded.slice(-2)}`;
 }
 
 /** Valor canônico como a pessoa lê, com separador de milhar. */
-export function moneyDisplay(value: string, decimals = 2): string {
+export function moneyDisplay(value: string): string {
   const parsed = parseNumber(value);
   if (value === "" || parsed === null) return value;
 
   return parsed.toLocaleString("pt-BR", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 
 /** Número para o valor canônico da máscara (`62` -> `"62,00"`). */
-export function moneyInput(value: number | null | undefined, decimals = 2): string {
+export function moneyInput(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "";
-  return value.toFixed(decimals).replace(".", ",");
+  return value.toFixed(2).replace(".", ",");
 }
-
-/**
- * Reaplica a máscara com outro número de casas. Serve à troca de unidade:
- * preço por kg tem centavos, por grama precisa de quatro casas (R$ 0,0620).
- */
-export const remaskMoney = (value: string, decimals: number) =>
-  moneyInput(parseNumber(value), decimals);
 
 /** Preço por grama exibido na unidade do produto. */
 export const priceIn = (pricePerGram: number, unit: Unit) =>

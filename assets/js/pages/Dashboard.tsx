@@ -6,6 +6,7 @@ import {
   Boxes,
   ChevronDown,
   Clock3,
+  MapPin,
   Receipt,
   TrendingUp,
   Users,
@@ -15,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DateRangePicker, type Range } from "@/components/DateRangePicker";
 import { DeliveryBadge } from "@/components/DeliveryBadge";
+import { OrdersMap } from "@/components/OrdersMap";
 import {
   ChartCard,
   ChartTable,
@@ -84,6 +86,18 @@ export default function Dashboard({ range, today, costs, sections }: Props) {
             Nenhuma seção de dados foi liberada para você. Fale com o
             administrador.
           </Empty>
+        )}
+
+        {has("map") && (
+          <Category
+            title="Mapa"
+            hint={`Onde os pedidos ${periodo} foram parar.`}
+            icon={MapPin}
+            data="map"
+            lines={2}
+          >
+            <Mapa />
+          </Category>
         )}
 
         {has("sales") && (
@@ -553,6 +567,29 @@ const Stock: React.FC = () => {
       )}
     </>
   );
+};
+
+/**
+ * O mapa dos pedidos.
+ *
+ * Só entra pedido com coordenada: retirada no balcão não tem endereço, e
+ * endereço que a busca não achou não tem ponto. O vazio explica isso — um
+ * mapa em branco pareceria defeito.
+ */
+const Mapa: React.FC = () => {
+  const orders = useCategory<Order[]>("map");
+  if (!orders) return null;
+
+  if (orders.length === 0) {
+    return (
+      <Empty>
+        Nenhum pedido com endereço no mapa nesse período. Retirada no balcão e
+        endereço que a busca não encontrou não viram ponto.
+      </Empty>
+    );
+  }
+
+  return <OrdersMap orders={orders} />;
 };
 
 const Recent: React.FC = () => {

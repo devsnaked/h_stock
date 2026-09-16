@@ -204,6 +204,53 @@ defmodule Web.ProductController do
     end
   end
 
+  @doc """
+  Corrige o custo pago por um lote.
+
+  Não é movimentação — nada entra nem sai —, e por isso não passa pelas ações
+  de estoque do produto: é o número da compra, digitado errado, sendo
+  acertado. O custo chega na unidade da tela e vira "por grama" aqui, como no
+  resto.
+  """
+  def correct_batch_cost(conn, %{"id" => id, "batch_id" => batch_id} = params) do
+    user = actor(conn)
+
+    with {:ok, product} <- fetch(Product, id, actor: user),
+         {:ok, batch} <- fetch_batch(product, batch_id, user) do
+      unit = params["unit"] || to_string(product.unit)
+
+      case to_price_per_gram(params["cost"], unit) do
+        %Decimal{} = cost -> do_correct_cost(conn, product, batch, cost, params, user)
+        _ -> fail(conn, [%{field: :cost, message: "informe o custo"}], ~p"/produtos/#{id}")
+      end
+    else
+      :error -> not_found(conn, ~p"/produtos", "Produto ou lote não encontrado.")
+    end
+  end
+
+  defp do_correct_cost(conn, product, batch, cost, params, user) do
+    case Inventory.correct_batch_cost(batch, cost, %{reason: presence(params["reason"])},
+           actor: user
+         ) do
+      {:ok, _batch} ->
+        conn
+        |> put_flash(:info, "Custo do lote #{batch.label} atualizado.")
+        |> redirect(to: ~p"/produtos/#{product.id}")
+
+      {:error, error} ->
+        fail(conn, error, ~p"/produtos/#{product.id}")
+    end
+  end
+
+  # O lote tem de ser deste produto: sem isto, um id de outro produto na URL
+  # corrigiria o custo de um lote que não está na tela.
+  defp fetch_batch(product, batch_id, user) do
+    case fetch(Batch, batch_id, actor: user) do
+      {:ok, %Batch{product_id: id} = batch} when id == product.id -> {:ok, batch}
+      _ -> :error
+    end
+  end
+
   defp do_move_stock(conn, product, params, user) do
     id = product.id
 

@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
 
-    <.inertia_title>{assigns[:page_title] || "h_stock"}</.inertia_title>
+    <%!-- Sem título de reserva: cada tela nomeia a própria aba (`<Head>` do
+          Inertia). Nada aqui anuncia o sistema antes de alguém entrar. --%>
+    <.inertia_title :if={assigns[:page_title]}>{@page_title}</.inertia_title>
     <.inertia_head content={assigns[:inertia_head]} />
 
     <link rel="stylesheet" href={~p"/assets/css/app.css"} />

@@ -14,7 +14,6 @@ defmodule Core.Accounts.Totp do
   banco nunca vê o código em claro, e cada um só funciona uma vez.
   """
 
-  @issuer "h_stock"
   @recovery_code_count 8
 
   @doc "Segredo novo para uma ativação."
@@ -30,8 +29,19 @@ defmodule Core.Accounts.Totp do
   """
   @spec provisioning_uri(binary(), String.t()) :: String.t()
   def provisioning_uri(secret, nickname) do
-    NimbleTOTP.otpauth_uri("#{@issuer}:#{nickname}", secret, issuer: @issuer)
+    issuer = issuer()
+    NimbleTOTP.otpauth_uri("#{issuer}:#{nickname}", secret, issuer: issuer)
   end
+
+  @doc """
+  O nome exibido pelo aplicativo autenticador (`config :h_stock, :totp_issuer`,
+  ou `TOTP_ISSUER`).
+
+  É o rótulo, e só ele: trocá-lo não mexe em segredo nenhum, e quem já ativou
+  continua entrando com o mesmo código.
+  """
+  @spec issuer() :: String.t()
+  def issuer, do: Application.get_env(:h_stock, :totp_issuer, "Mercado")
 
   @doc """
   QR Code da URI como data URI de SVG, pronto para um `<img src=...>`.

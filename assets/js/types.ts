@@ -13,6 +13,7 @@ export type Role = "admin" | "employee" | "driver";
  * bloco pede `sales` ao servidor e recebe `sales`.
  */
 export type DashboardSection =
+  | "map"
   | "sales"
   | "hours"
   | "products"
@@ -123,6 +124,7 @@ export type AuditAction =
   | "stock_out"
   | "stock_return"
   | "stock_adjusted"
+  | "stock_cost_corrected"
   | "order_registered"
   | "order_cancelled"
   | "order_driver_assigned"

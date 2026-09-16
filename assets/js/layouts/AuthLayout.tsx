@@ -7,12 +7,13 @@ import { useFlashToasts } from "@/hooks/useFlashToasts";
 /**
  * Telas públicas de autenticação. Card único, centralizado, sem navegação.
  *
- * `title` sempre nomeia a aba; `showHeader` decide se ele também aparece na
- * tela. O login dispensa o cabeçalho — quem chega ali já sabe onde está, e o
- * formulário sozinho é a tela inteira.
+ * `title` nomeia a aba, e `showHeader` decide se ele também aparece na tela.
+ * Os dois são opcionais: o login não usa nenhum dos dois — a tela de entrada
+ * não precisa dizer em que sistema se está entrando, e o formulário sozinho é
+ * a tela inteira.
  */
 export const AuthLayout: React.FC<{
-  title: string;
+  title?: string;
   subtitle?: string;
   showHeader?: boolean;
   children: React.ReactNode;
@@ -22,11 +23,11 @@ export const AuthLayout: React.FC<{
 
   return (
     <div className="flex min-h-dvh flex-col justify-center bg-background px-4 py-10 text-foreground">
-      <Head title={title} />
+      {title && <Head title={title} />}
       <Toaster />
 
       <div className="mx-auto w-full max-w-sm space-y-6">
-        {showHeader && (
+        {showHeader && title && (
           <div className="flex flex-col items-center text-center">
             <div className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
               <Scale className="size-7" />

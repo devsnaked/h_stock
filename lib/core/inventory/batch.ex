@@ -65,6 +65,21 @@ defmodule Core.Inventory.Batch do
       primary? true
       accept [:remaining_grams, :depleted_at]
     end
+
+    update :correct_cost do
+      description """
+      Corrige o custo pago por este lote — o número digitado errado na compra.
+      Não move estoque: acerta o que a venda usa para calcular lucro daqui
+      para a frente. O que já saiu daqui guarda o custo que tinha na hora.
+      """
+
+      require_atomic? false
+      accept [:cost_per_gram]
+
+      argument :reason, :string
+
+      change Core.Inventory.Changes.CorrectBatchCost
+    end
   end
 
   policies do
@@ -75,9 +90,17 @@ defmodule Core.Inventory.Batch do
       authorize_if actor_present()
     end
 
-    # Lote nasce e muda por dentro das ações de estoque do produto, que rodam
-    # com `authorize?: false` depois de já terem validado a permissão.
-    policy action_type([:create, :update, :destroy]) do
+    # Corrigir custo é a única escrita que se pede ao lote diretamente, e é do
+    # grupo do estoque — a mesma régua de quem enxerga custo nas telas.
+    policy action(:correct_cost) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:can_manage_stock, true)
+    end
+
+    # O resto: lote nasce e muda por dentro das ações de estoque do produto,
+    # que rodam com `authorize?: false` depois de já terem validado a
+    # permissão.
+    policy action([:create, :update]) do
       forbid_if always()
     end
   end

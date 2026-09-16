@@ -11,6 +11,10 @@ defmodule Core.Accounts.Permissions do
     * `can_view_dashboard` — abre (ou não) o painel inteiro;
     * `dashboard_sections` — dentro dele, quais seções existem para a pessoa.
 
+  O mapa dos pedidos é uma seção como as outras, e por isso é permissão à
+  parte: ele mostra onde os clientes moram, que é o dado mais sensível da
+  loja.
+
   Admin enxerga tudo por definição, como no estoque e nos pedidos; entregador
   não enxerga nada (o painel é do balcão, e o domínio zera as permissões dele
   em `Core.Accounts.Changes.NormalizePermissions`).
@@ -28,7 +32,7 @@ defmodule Core.Accounts.Permissions do
   # A ordem é a do painel, de cima para baixo. Ela é a canônica: o que vem do
   # formulário é reordenado por ela, então a lista guardada no banco lê como a
   # tela.
-  @dashboard_sections [:sales, :hours, :products, :team, :delivery, :stock, :recent]
+  @dashboard_sections [:map, :sales, :hours, :products, :team, :delivery, :stock, :recent]
 
   @doc "Todas as seções de dados do painel, na ordem em que a tela as mostra."
   def dashboard_sections, do: @dashboard_sections

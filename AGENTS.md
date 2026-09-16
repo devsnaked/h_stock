@@ -34,6 +34,12 @@ renderização de páginas aqui.
   `adjust_stock` (os três dizem em qual lote mexem), que gravam a
   `StockMovement` correspondente na mesma transação. `grams` da movimentação é
   assinado (+entra / −sai).
+- **Custo de lote se corrige; saldo, não.** `Batch.correct_cost` (via
+  `Inventory.correct_batch_cost/4`) acerta o `cost_per_gram` de um lote — é o
+  número da compra digitado errado, não movimentação: peso não muda e nada
+  entra no histórico de estoque, só no log de auditoria
+  (`:stock_cost_corrected`, com o antes e o depois). Vale daqui para a frente:
+  item de pedido já registrado guarda o custo que copiou.
 - **Toda saída escolhe o lote** — inclusive a venda. É o custo daquele lote
   que vira o lucro; sem a escolha, o lucro seria chute. Cancelamento devolve
   ao **mesmo** lote (`return_stock`), nunca abre um novo.
@@ -68,7 +74,7 @@ renderização de páginas aqui.
   pessoa escolhe o ponto no mapa; a geocodificação (`Core.Geocoding`) é
   opcional — serviço fora do ar não pode impedir a venda.
 - **O painel é permissão, e cada seção dele também.** `can_view_dashboard`
-  abre a home; `dashboard_sections` diz quais das sete seções (vendas,
+  abre a home; `dashboard_sections` diz quais das oito seções (mapa, vendas,
   horários, produtos, equipe, entrega, estoque, últimos pedidos) existem para
   a pessoa. A lista canônica é `Core.Accounts.Permissions` — seção nova entra
   ali e aparece no recurso, no controller e no formulário de permissões, sem
@@ -100,8 +106,10 @@ renderização de páginas aqui.
   `config :h_stock, :totp_required` (via `Web.TotpSession.required?/0`) decide
   se o segundo fator é cobrado; desligada, ninguém é parado, mas segredo,
   códigos de recuperação e a tela de Segurança continuam de pé, e religar
-  volta a cobrar o mesmo código. **Hoje está desligada em desenvolvimento**
-  (`config/dev.exs`); produção segue exigindo.
+  volta a cobrar o mesmo código. **Está ligada em todos os ambientes** —
+  desligar é exceção pontual (`TOTP_REQUIRED=false mix phx.server`), não o
+  padrão de desenvolvimento. O nome exibido no autenticador é
+  `config :h_stock, :totp_issuer` (`TOTP_ISSUER`), não o nome do projeto.
 - **Mexeu no login, teste o que ele impede.** O caminho da senha é fácil de
   acertar; o que quebra em silêncio é o atalho — token na sessão antes do
   segundo fator, código aceito duas vezes, cookie que reponha a sessão sozinho.
@@ -141,7 +149,14 @@ renderização de páginas aqui.
 - **Campo de dinheiro é `MoneyInput`**, nunca um `Input` solto: a máscara
   entra pela direita (digitar "6200" vira "62,00") e devolve o valor canônico
   ("1234,56", sem separador de milhar) — que é o que `to_decimal/1` entende.
-  Valor por grama usa `decimals={4}`.
+  **Sempre duas casas**, na entrada, em qualquer unidade: é o que se escreve
+  num preço no Brasil. Exibir é outra história — `unitPrice` mostra as casas
+  que o valor por grama tiver, porque lá elas existem de verdade.
+- **Interruptor morto não vai para a tela.** No formulário de equipe as
+  permissões só aparecem para o **funcionário**: administrador passa por cima
+  de toda flag no servidor e entregador tem todas zeradas pelo domínio, então
+  para esses dois a tela diz a regra em uma frase em vez de mostrar switches
+  travados — que leem como defeito.
 - **Gráficos são Recharts com os tokens `--chart-*`**, e seguem a mesma
   paleta neutra: cinza é a série principal, verde é lucro, âmbar é estoque a
   resolver, vermelho é venda perdida. Nada de eixo duplo, e todo gráfico traz
@@ -257,6 +272,12 @@ Ação nova na lista exige três lugares: a constraint `one_of` de
   em snake_case no Elixir. Structs do domínio passam por `Web.Serializers`.
 - Props compartilhados (`user`, `csrfToken`, `flash`) vêm do
   `Web.Plugs.SetCurrentUser` — não os repita nos controllers.
+- **Os seeds criam só o administrador em produção**; em desenvolvimento criam
+  também a loja de exemplo (`Core.Demo`: funcionário, entregador e catálogo). A
+  diferença é `Mix.env() == :dev` — dentro do release não existe `Mix`, então
+  produção não depende de ninguém lembrar de uma variável. As vendas de
+  exemplo são `mix demo.orders`, que usa o mesmo `Core.Demo` e se recusa a
+  rodar em produção.
 - Mudou recurso Ash? `mix ash.codegen <nome>`. Migration escrita à mão, nunca.
 - **Variável de ambiente nova se lê em `config/runtime.exs`**, nunca em
   `config/config.exs`: este último é lido em tempo de compilação, e numa

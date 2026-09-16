@@ -281,33 +281,43 @@ export default function NewOrder({ products, drivers }: Props) {
                 retirada seriam perguntas sem resposta. */}
             {data.needs_delivery && (
               <div className="space-y-4 border-t border-border pt-4">
-                {drivers.length > 0 && (
-                  <Field
-                    label="Entregador"
-                    htmlFor="driver_id"
-                    hint="Opcional. Em branco, o pedido entra na fila e você escolhe depois."
-                    error={errors.driver_id}
+                {/* O campo existe mesmo sem entregador cadastrado: escondê-lo
+                    faria a venda parecer não ter essa escolha, quando o que
+                    falta é gente na equipe. */}
+                <Field
+                  label="Entregador"
+                  htmlFor="driver_id"
+                  hint={
+                    drivers.length > 0
+                      ? "Opcional. Em branco, o pedido entra na fila e você escolhe depois, na tela do pedido."
+                      : "Nenhum entregador ativo na equipe. O pedido entra na fila e espera — quem cadastra entregador é o administrador, em Equipe."
+                  }
+                  error={errors.driver_id}
+                >
+                  <Select
+                    value={data.driver_id}
+                    disabled={drivers.length === 0}
+                    onValueChange={(value) =>
+                      setData("driver_id", value === UNASSIGNED ? "" : value)
+                    }
                   >
-                    <Select
-                      value={data.driver_id}
-                      onValueChange={(value) =>
-                        setData("driver_id", value === UNASSIGNED ? "" : value)
-                      }
-                    >
-                      <SelectTrigger id="driver_id" aria-label="Entregador">
-                        <SelectValue placeholder="Definir depois" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={UNASSIGNED}>Definir depois</SelectItem>
-                        {drivers.map((driver) => (
-                          <SelectItem key={driver.id} value={driver.id}>
-                            {driver.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                )}
+                    <SelectTrigger id="driver_id" aria-label="Entregador">
+                      <SelectValue
+                        placeholder={
+                          drivers.length > 0 ? "Definir depois" : "Nenhum entregador cadastrado"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={UNASSIGNED}>Definir depois</SelectItem>
+                      {drivers.map((driver) => (
+                        <SelectItem key={driver.id} value={driver.id}>
+                          {driver.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
 
                 <AddressPicker
                   address={data.delivery_address}

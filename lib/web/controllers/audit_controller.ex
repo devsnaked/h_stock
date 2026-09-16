@@ -25,7 +25,7 @@ defmodule Web.AuditController do
   # pergunta — quem confere pensa em "estoque" e "pedidos", não em doze nomes
   # de evento.
   @groups %{
-    "estoque" => [:stock_in, :stock_out, :stock_return, :stock_adjusted],
+    "estoque" => [:stock_in, :stock_out, :stock_return, :stock_adjusted, :stock_cost_corrected],
     "produtos" => [:product_created, :product_updated],
     "pedidos" => [
       :order_registered,

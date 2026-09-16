@@ -107,6 +107,7 @@ defmodule Web.Router do
     get "/produtos/:id/editar", ProductController, :edit
     put "/produtos/:id", ProductController, :update
     post "/produtos/:id/estoque", ProductController, :move_stock
+    post "/produtos/:id/lotes/:batch_id/custo", ProductController, :correct_batch_cost
   end
 
   # Gestão de usuários e permissões: só admin.

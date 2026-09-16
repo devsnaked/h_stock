@@ -98,10 +98,8 @@ config :phoenix_live_view,
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
 
-# ⚠️ TEMPORÁRIO — verificação em duas etapas desligada em desenvolvimento.
+# A verificação em duas etapas vale aqui como vale em produção — é assim que
+# se percorre o login inteiro sem surpresa no dia do deploy. Para desligá-la
+# numa sessão de trabalho pontual, sem tocar neste arquivo:
 #
-# Nada foi removido do sistema: o segredo de quem já ativou continua no banco,
-# a tela de Segurança continua funcionando e o login volta a pedir o código no
-# instante em que esta linha sair (ou virar `true`). Produção não é afetada —
-# lá vale o padrão de `config.exs`, que é exigir.
-config :h_stock, :totp_required, false
+#     TOTP_REQUIRED=false mix phx.server

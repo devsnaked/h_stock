@@ -36,6 +36,7 @@ defmodule Core.Inventory do
       define :get_batch, action: :read, get_by: [:id]
       define :list_batches_for_product, action: :for_product, args: [:product_id]
       define :list_available_batches, action: :available
+      define :correct_batch_cost, action: :correct_cost, args: [:cost_per_gram]
     end
 
     resource Core.Inventory.StockMovement do

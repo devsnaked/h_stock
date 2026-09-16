@@ -29,6 +29,9 @@ defmodule Core.Analytics do
 
   require Ash.Query
 
+  # Quantos pedidos o mapa desenha, no máximo. Ver `map/3`.
+  @map_limit 300
+
   alias Core.Clock
   alias Core.Inventory.Product
   alias Core.Orders.Order
@@ -259,6 +262,31 @@ defmodule Core.Analytics do
     |> Ash.Query.sort(inserted_at: :desc)
     |> Ash.Query.limit(8)
     |> Ash.Query.load([:user, :driver, :items_count])
+    |> Ash.read!(actor: actor)
+  end
+
+  @doc """
+  Os pedidos do período que têm ponto no mapa.
+
+  É a única categoria que devolve o pedido inteiro em vez de números: o mapa
+  não resume nada: cada ponto é um pedido, e o balão precisa dizer de quem é,
+  quanto foi e em que pé está a entrega. Vem serializado por quem chama, com a
+  mesma régua de custo das outras telas.
+
+  Só entra pedido com coordenada — endereço escrito à mão e não encontrado no
+  mapa não vira ponto, e pedido de retirada no balcão não tem endereço nenhum.
+  O teto de #{@map_limit} é do desenho da tela, não do banco: mais pontos que
+  isso viram uma mancha, e o período menor é a resposta certa.
+  """
+  def map(actor, from, to) do
+    {start_at, end_at} = Clock.range(from, to)
+
+    Order
+    |> Ash.Query.filter(inserted_at >= ^start_at and inserted_at < ^end_at)
+    |> Ash.Query.filter(not is_nil(delivery_lat) and not is_nil(delivery_lon))
+    |> Ash.Query.sort(inserted_at: :desc)
+    |> Ash.Query.limit(@map_limit)
+    |> Ash.Query.load([:user, :driver])
     |> Ash.read!(actor: actor)
   end
 

@@ -4,6 +4,7 @@ defmodule Web.ProductControllerTest do
   import Inertia.Testing
   import Core.Fixtures
 
+  alias Core.Inventory.Batch
   alias Core.Inventory.Product
 
   describe "quem pode o quê" do
@@ -131,6 +132,55 @@ defmodule Web.ProductControllerTest do
       assert redirected_to(conn) == ~p"/produtos/#{product.id}"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "insuficiente"
       assert Decimal.equal?(Ash.get!(Product, product.id, authorize?: false).stock_grams, 1_000)
+    end
+  end
+
+  describe "correção do custo do lote" do
+    setup %{conn: conn} do
+      %{
+        conn: log_in(conn, admin_fixture()),
+        product: product_fixture(stock_grams: 1_000, cost_per_gram: "0.02")
+      }
+    end
+
+    test "o custo por kg da tela vira custo por grama no lote",
+         %{conn: conn, product: product} do
+      lote = batch_of(product)
+
+      conn =
+        post(conn, ~p"/produtos/#{product.id}/lotes/#{lote.id}/custo", %{
+          "cost" => "45",
+          "unit" => "kg",
+          "reason" => "Nota fiscal"
+        })
+
+      assert redirected_to(conn) == ~p"/produtos/#{product.id}"
+      assert Decimal.equal?(Ash.get!(Batch, lote.id, authorize?: false).cost_per_gram, "0.045")
+      # Corrigir custo não mexe no peso.
+      assert Decimal.equal?(Ash.get!(Product, product.id, authorize?: false).stock_grams, 1_000)
+    end
+
+    test "sem custo, volta com o motivo", %{conn: conn, product: product} do
+      lote = batch_of(product)
+
+      conn = post(conn, ~p"/produtos/#{product.id}/lotes/#{lote.id}/custo", %{"unit" => "kg"})
+
+      assert redirected_to(conn) == ~p"/produtos/#{product.id}"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "custo"
+      assert Decimal.equal?(Ash.get!(Batch, lote.id, authorize?: false).cost_per_gram, "0.02")
+    end
+
+    test "lote de outro produto não é alcançado pela URL", %{conn: conn, product: product} do
+      alheio = batch_of(product_fixture(stock_grams: 100, cost_per_gram: "0.01"))
+
+      conn =
+        post(conn, ~p"/produtos/#{product.id}/lotes/#{alheio.id}/custo", %{
+          "cost" => "99",
+          "unit" => "kg"
+        })
+
+      assert redirected_to(conn) == ~p"/produtos"
+      assert Decimal.equal?(Ash.get!(Batch, alheio.id, authorize?: false).cost_per_gram, "0.01")
     end
   end
 
