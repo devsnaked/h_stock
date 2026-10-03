@@ -116,10 +116,27 @@ defmodule Web.Serializers do
       assigned_at: order.assigned_at,
       out_for_delivery_at: order.out_for_delivery_at,
       delivered_at: order.delivered_at,
-      user_name: loaded_name(order, :user)
+      user_name: loaded_name(order, :user),
+      # Venda a prazo: vencimento e baixa. "Vencido" sai daqui, e não da
+      # tela, porque o "hoje" que conta é o da loja, não o do aparelho.
+      payment_due_on: order.payment_due_on,
+      paid_at: order.paid_at,
+      payment_overdue: Orders.overdue?(order)
     }
 
     base
+    # Quem editou é do administrador, como o log de onde vem o histórico: o
+    # campo não sai do servidor para mais ninguém.
+    |> then(fn base ->
+      if Keyword.get(opts, :edits, false) do
+        Map.merge(base, %{
+          edited_at: order.edited_at,
+          edited_by_name: loaded_name(order, :edited_by)
+        })
+      else
+        base
+      end
+    end)
     |> then(fn base ->
       if costs?(opts) do
         Map.merge(base, %{

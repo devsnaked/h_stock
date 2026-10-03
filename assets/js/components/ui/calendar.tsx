@@ -11,6 +11,13 @@ type CalendarProps = {
   onSelect: (range: DateRange) => void;
   /** Último dia selecionável — normalmente "hoje" vindo do servidor. */
   max?: string;
+  /** Primeiro dia selecionável. */
+  min?: string;
+  /**
+   * Um dia só, em vez de intervalo: o toque já escolhe, e `onSelect` recebe
+   * `from === to`. Sem seleção ainda, `selected` vem com as duas pontas vazias.
+   */
+  single?: boolean;
   className?: string;
 };
 
@@ -32,8 +39,9 @@ const MONTHS = [
 ];
 
 /**
- * Calendário de intervalo, escrito no padrão do resto do `ui/`: Tailwind com
- * os tokens do tema, `cn` para compor classe, e nenhuma dependência nova.
+ * Calendário de intervalo (ou de um dia só, com `single` — o vencimento da
+ * venda a prazo), escrito no padrão do resto do `ui/`: Tailwind com os tokens
+ * do tema, `cn` para compor classe, e nenhuma dependência nova.
  *
  * O `<input type="date">` do navegador foi trocado por isto porque ele é a
  * única peça da interface que o app não desenha: muda de cara em cada
@@ -45,8 +53,17 @@ const MONTHS = [
  * `toISOString()`: o fuso do aparelho transformaria 1º de agosto às 00h em 31
  * de julho, e o relatório mudaria de mês sozinho.
  */
-export const Calendar: React.FC<CalendarProps> = ({ selected, onSelect, max, className }) => {
-  const [cursor, setCursor] = React.useState(() => monthOf(selected.to || selected.from));
+export const Calendar: React.FC<CalendarProps> = ({
+  selected,
+  onSelect,
+  max,
+  min,
+  single = false,
+  className,
+}) => {
+  const [cursor, setCursor] = React.useState(() =>
+    monthOf(selected.to || selected.from || min || max || ""),
+  );
   // Primeiro toque marca o começo; o segundo fecha o intervalo. Enquanto o
   // segundo não vem, a data sob o dedo mostra como o intervalo ficaria.
   const [anchor, setAnchor] = React.useState<string | null>(null);
@@ -57,6 +74,11 @@ export const Calendar: React.FC<CalendarProps> = ({ selected, onSelect, max, cla
     : { from: selected.from, to: selected.to };
 
   const pick = (day: string) => {
+    if (single) {
+      onSelect({ from: day, to: day });
+      return;
+    }
+
     if (!anchor) {
       setAnchor(day);
       setHovered(day);
@@ -77,6 +99,7 @@ export const Calendar: React.FC<CalendarProps> = ({ selected, onSelect, max, cla
           variant="ghost"
           size="icon"
           aria-label="Mês anterior"
+          disabled={min !== undefined && startOfMonth(cursor) <= min}
           onClick={() => setCursor(shiftMonth(cursor, -1))}
         >
           <ChevronLeft className="size-4" />
@@ -107,7 +130,8 @@ export const Calendar: React.FC<CalendarProps> = ({ selected, onSelect, max, cla
         {days.map((day, index) => {
           if (day === null) return <span key={`vazio-${index}`} />;
 
-          const disabled = max !== undefined && day > max;
+          const disabled =
+            (max !== undefined && day > max) || (min !== undefined && day < min);
           const isFrom = day === preview.from;
           const isTo = day === preview.to;
           const inside = day > preview.from && day < preview.to;
@@ -142,9 +166,13 @@ export const Calendar: React.FC<CalendarProps> = ({ selected, onSelect, max, cla
       </div>
 
       <p className="text-center text-xs text-muted-foreground">
-        {anchor
-          ? "Agora escolha o fim do intervalo."
-          : `${brief(selected.from)} até ${brief(selected.to)}`}
+        {single
+          ? selected.from
+            ? longLabel(selected.from)
+            : "Toque no dia."
+          : anchor
+            ? "Agora escolha o fim do intervalo."
+            : `${brief(selected.from)} até ${brief(selected.to)}`}
       </p>
     </div>
   );

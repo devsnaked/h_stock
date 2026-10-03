@@ -15,6 +15,7 @@ export type Role = "admin" | "employee" | "driver";
 export type DashboardSection =
   | "map"
   | "sales"
+  | "receivables"
   | "hours"
   | "products"
   | "team"
@@ -130,7 +131,9 @@ export type AuditAction =
   | "order_driver_assigned"
   | "order_out_for_delivery"
   | "order_delivered"
-  | "order_reopened";
+  | "order_reopened"
+  | "order_paid"
+  | "order_updated";
 
 export type AuditEntry = {
   id: string;
@@ -201,6 +204,21 @@ export type Order = {
   outForDeliveryAt: string | null;
   deliveredAt: string | null;
   userName: string | null;
+  /**
+   * Vencimento da venda a prazo (data ISO, dia da loja). `null` é venda à
+   * vista — paga no balcão, nada a receber.
+   */
+  paymentDueOn: string | null;
+  /** Quando a venda a prazo foi paga. `null` com vencimento: em aberto. */
+  paidAt: string | null;
+  /** A prazo, em aberto e com o dia combinado já passado (calculado no servidor). */
+  paymentOverdue: boolean;
+  /**
+   * Última edição e quem fez. Só chegam para o admin — para os outros o
+   * servidor nem manda os campos.
+   */
+  editedAt?: string | null;
+  editedByName?: string | null;
   itemsCount?: number;
   note?: string | null;
   items?: OrderItem[];
@@ -249,6 +267,38 @@ export type SalesAnalytics = {
     profit?: number;
   };
   cancellations: { count: number; total: number };
+};
+
+/** Contagem e soma de um grupo de pedidos. */
+export type Tally = { orders: number; total: number };
+
+/**
+ * Vendas a prazo. `open`, `overdue`, `dueSoon`, `schedule` e `overdueOrders`
+ * são de agora; só `period` segue o recorte de datas.
+ */
+export type ReceivablesAnalytics = {
+  open: Tally;
+  overdue: Tally;
+  /** Vence nos próximos sete dias, hoje incluído. */
+  dueSoon: Tally;
+  period: Tally & {
+    /** Fração (0–1) do faturamento do período vendida a prazo. */
+    share: number;
+    /** Pagamentos que entraram no período, pela data em que entraram. */
+    received: Tally;
+    /** Quantos desses foram pagos depois do dia combinado. */
+    receivedLate: number;
+  };
+  /** Em aberto, pelo mês do vencimento (`2026-10`). */
+  schedule: (Tally & { month: string })[];
+  overdueOrders: {
+    id: string;
+    code: string;
+    customerName: string | null;
+    total: number;
+    paymentDueOn: string;
+    daysLate: number;
+  }[];
 };
 
 export type HourAnalytics = { hour: number; orders: number; revenue: number };

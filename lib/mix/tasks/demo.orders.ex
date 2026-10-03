@@ -10,8 +10,9 @@ defmodule Mix.Tasks.Demo.Orders do
   Existe porque o painel só tem o que mostrar quando existe venda: numa base
   recém-criada os gráficos aparecem vazios e não dá para avaliar a tela. As
   vendas saem espalhadas pelos dias e pelas horas do expediente, com entregas
-  em estágios diferentes, algumas retiradas no balcão e alguns cancelamentos —
-  é o que faz cada gráfico ter forma.
+  em estágios diferentes, algumas retiradas no balcão, algumas vendas a prazo
+  (pagas, em aberto e vencidas) e alguns cancelamentos — é o que faz cada
+  gráfico ter forma.
 
   A loja de exemplo vem inteira: se faltarem produtos, funcionário ou
   entregador, a tarefa os cria antes de vender (`Core.Demo`, senha
@@ -105,7 +106,11 @@ defmodule Mix.Tasks.Demo.Orders do
       delivery_status: if(delivery?, do: :pending, else: :not_required),
       discount_type: Enum.random([:none, :none, :none, :percent, :amount]),
       discount_value: Decimal.new(Enum.random(1..10)),
-      delivery_address: if(delivery?, do: Enum.random(addresses()))
+      delivery_address: if(delivery?, do: Enum.random(addresses())),
+      # Uma em cada cinco a prazo. Registrada com vencimento hoje porque o
+      # domínio não aceita prazo no passado; o `backdate/2` empurra o
+      # vencimento para depois do dia da venda.
+      payment_due_on: if(Enum.random(1..5) == 1, do: Core.Clock.today())
     }
 
     attrs =
@@ -193,6 +198,7 @@ defmodule Mix.Tasks.Demo.Orders do
         DateTime.add(at, Enum.random(35..90), :minute)
       )
       |> put_when(order.cancelled_at, :cancelled_at, DateTime.add(at, 45, :minute))
+      |> Keyword.merge(payment(order, date))
 
     Core.Repo.update_all(
       from(o in "orders", where: o.id == type(^order.id, :binary_id)),
@@ -200,6 +206,26 @@ defmodule Mix.Tasks.Demo.Orders do
     )
 
     order
+  end
+
+  # Prazo de 7, 15 ou 30 dias a partir da venda. O que já venceu foi pago na
+  # maior parte das vezes — às vezes com atraso; o resto fica vencido, que é o
+  # que dá o que mostrar na cobrança.
+  defp payment(%{payment_due_on: nil}, _date), do: []
+
+  defp payment(order, date) do
+    due = Date.add(date, Enum.random([7, 15, 30]))
+    today = Core.Clock.today()
+
+    if order.status == :completed and Date.before?(due, today) and Enum.random(1..4) > 1 do
+      paid_on = Enum.min([Date.add(due, Enum.random(-3..4)), today], Date)
+      {:ok, naive} = NaiveDateTime.new(paid_on, ~T[15:00:00])
+      {:ok, local} = DateTime.from_naive(naive, Core.Clock.timezone())
+
+      [payment_due_on: due, paid_at: DateTime.shift_zone!(local, "Etc/UTC")]
+    else
+      [payment_due_on: due]
+    end
   end
 
   defp put_when(fields, nil, _key, _value), do: fields

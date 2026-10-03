@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useForm } from "@inertiajs/react";
-import { Plus, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,19 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { UnitToggle } from "@/components/UnitToggle";
 import { AddressPicker } from "@/components/AddressPicker";
+import { PaymentFields } from "@/components/PaymentFields";
+import { ProductPicker, previewDiscount, type CartItem } from "@/components/ProductPicker";
 import { toast } from "@/components/ui/sonner";
-import {
-  money,
-  parseNumber,
-  priceIn,
-  toGrams,
-  unitLabel,
-  unitPrice,
-  weight,
-} from "@/lib/format";
-import type { Batch, DiscountType, Driver, Product, Unit } from "@/types";
+import { dateLabel, money, parseNumber, unitPrice, weight } from "@/lib/format";
+import { fieldErrors } from "@/lib/errors";
+import type { DiscountType, Driver, Product, Unit } from "@/types";
 
 // O Radix não aceita `value=""` num item de Select (string vazia é o estado
 // "sem seleção"), então "sem entregador" precisa de um valor próprio.
@@ -37,26 +31,14 @@ type Props = {
   products: Product[];
   /** Entregadores ativos, para a venda já sair com dono. */
   drivers: Driver[];
+  /** Hoje no fuso da loja: o vencimento da venda a prazo parte daqui. */
+  today: string;
 };
 
-/**
- * Linha do carrinho. A chave é o **lote**, não o produto: dois lotes do mesmo
- * produto custaram preços diferentes e são duas linhas no pedido.
- */
-type CartItem = {
-  productId: string;
-  batchId: string;
-  name: string;
-  batchLabel: string;
-  grams: number;
-  pricePerGram: number;
-  total: number;
-};
-
-export default function NewOrder({ products, drivers }: Props) {
+export default function NewOrder({ products, drivers, today }: Props) {
   const [cart, setCart] = React.useState<CartItem[]>([]);
 
-  const { data, setData, post, processing, errors } = useForm({
+  const form = useForm({
     items: [] as { product_id: string; batch_id: string; quantity: string; unit: Unit }[],
     customer_name: "",
     note: "",
@@ -73,7 +55,13 @@ export default function NewOrder({ products, drivers }: Props) {
     // assim que o formulário viaja; o servidor converte para decimal.
     delivery_lat: "",
     delivery_lon: "",
+    // À vista por padrão: é o fluxo comum. A prazo leva o dia combinado com
+    // o cliente, e o pedido fica em aberto até alguém dar baixa.
+    on_credit: false,
+    payment_due_on: "",
   });
+  const { data, setData, post, processing } = form;
+  const errors = fieldErrors(form.errors);
 
   const subtotal = cart.reduce((acc, item) => acc + item.total, 0);
   const discount = previewDiscount(subtotal, data.discount_type, data.discount_value);
@@ -121,6 +109,11 @@ export default function NewOrder({ products, drivers }: Props) {
 
     if (cart.length === 0) {
       toast.error("Adicione ao menos um produto ao pedido.");
+      return;
+    }
+
+    if (data.on_credit && data.payment_due_on === "") {
+      toast.error("Escolha o dia do pagamento da venda a prazo.");
       return;
     }
 
@@ -244,8 +237,29 @@ export default function NewOrder({ products, drivers }: Props) {
         </Card>
 
         <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Pagamento</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PaymentFields
+              today={today}
+              onCredit={data.on_credit}
+              dueOn={data.payment_due_on}
+              error={errors.payment_due_on}
+              onCreditChange={(value) => setData("on_credit", value)}
+              onDueOnChange={(value) => setData("payment_due_on", value)}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
           <CardContent className="space-y-4 p-4">
-            <Field label="Cliente" htmlFor="customer_name" hint="Opcional.">
+            <Field
+              label="Cliente"
+              htmlFor="customer_name"
+              hint={data.on_credit ? "Obrigatório na venda a prazo: é quem vai pagar." : "Opcional."}
+              error={errors.customer_name}
+            >
               <Input
                 id="customer_name"
                 value={data.customer_name}
@@ -355,6 +369,16 @@ export default function NewOrder({ products, drivers }: Props) {
               <dt>Total</dt>
               <dd className="tabular-nums">{money(total)}</dd>
             </div>
+            {data.on_credit && (
+              <div className="flex justify-between text-muted-foreground">
+                <dt>A prazo</dt>
+                <dd className="tabular-nums">
+                  {data.payment_due_on === ""
+                    ? "escolha o dia"
+                    : `vence ${dateLabel(data.payment_due_on)}`}
+                </dd>
+              </div>
+            )}
           </dl>
 
           <Button
@@ -369,149 +393,4 @@ export default function NewOrder({ products, drivers }: Props) {
       </form>
     </AppLayout>
   );
-}
-
-/**
- * Escolher produto, dizer de qual lote sai, pesar e adicionar — o gesto que
- * mais se repete na tela.
- *
- * O lote é escolhido aqui porque é ele que carrega o custo daquela
- * mercadoria: sem essa escolha o lucro da venda seria um chute. Produto com
- * um lote só já vem escolhido, para não custar um toque a mais no balcão.
- */
-const ProductPicker: React.FC<{
-  products: Product[];
-  onAdd: (item: CartItem) => void;
-}> = ({ products, onAdd }) => {
-  const [productId, setProductId] = React.useState<string>("");
-  const [batchId, setBatchId] = React.useState<string>("");
-  const [quantity, setQuantity] = React.useState("");
-  const [unit, setUnit] = React.useState<Unit>("kg");
-  const [error, setError] = React.useState<string | undefined>();
-
-  const product = products.find((entry) => entry.id === productId);
-  const batches: Batch[] = product?.batches ?? [];
-  const batch = batches.find((entry) => entry.id === batchId);
-
-  React.useEffect(() => {
-    if (!product) return;
-
-    setUnit(product.unit);
-    // Um lote só: escolhe sozinho. Vários: a pessoa decide de qual tira.
-    setBatchId(product.batches?.length === 1 ? product.batches[0].id : "");
-  }, [product]);
-
-  const add = () => {
-    const parsed = parseNumber(quantity);
-
-    if (!product) return setError("Escolha um produto.");
-    if (!batch) return setError("Escolha o lote.");
-    if (parsed === null || parsed <= 0) return setError("Informe um peso válido.");
-
-    const grams = toGrams(parsed, unit);
-
-    if (grams > batch.remainingGrams) {
-      return setError(`Neste lote há ${weight(batch.remainingGrams)}.`);
-    }
-
-    onAdd({
-      productId: product.id,
-      batchId: batch.id,
-      name: product.name,
-      batchLabel: batch.label,
-      grams,
-      pricePerGram: product.pricePerGram,
-      total: grams * product.pricePerGram,
-    });
-
-    setQuantity("");
-    setError(undefined);
-  };
-
-  return (
-    <Card>
-      <CardContent className="space-y-3 p-4">
-        <Field label="Produto">
-          <Select value={productId} onValueChange={setProductId}>
-            <SelectTrigger aria-label="Produto">
-              <SelectValue placeholder="Escolher produto" />
-            </SelectTrigger>
-            <SelectContent>
-              {products.map((entry) => (
-                <SelectItem key={entry.id} value={entry.id}>
-                  {entry.name} · {weight(entry.stockGrams)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-
-        {product && (
-          <p className="text-xs text-muted-foreground">
-            {unitPrice(priceIn(product.pricePerGram, product.unit))} / {unitLabel(product.unit)} ·
-            disponível {weight(product.stockGrams)}
-          </p>
-        )}
-
-        {product && batches.length > 1 && (
-          <Field label="Lote" hint="De qual compra está saindo.">
-            <Select value={batchId} onValueChange={setBatchId}>
-              <SelectTrigger aria-label="Lote">
-                <SelectValue placeholder="Escolher lote" />
-              </SelectTrigger>
-              <SelectContent>
-                {batches.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {entry.label} · {weight(entry.remainingGrams)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        )}
-
-        {product && batches.length === 1 && (
-          <p className="text-xs text-muted-foreground">lote {batches[0].label}</p>
-        )}
-
-        <Field label="Peso" htmlFor="quantity" error={error}>
-          <div className="space-y-2">
-            <Input
-              id="quantity"
-              inputMode="decimal"
-              placeholder="0"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  add();
-                }
-              }}
-              aria-invalid={Boolean(error)}
-            />
-            <UnitToggle value={unit} onChange={setUnit} />
-          </div>
-        </Field>
-
-        <Button variant="secondary" className="w-full" onClick={add}>
-          <Plus className="size-4" />
-          Adicionar ao pedido
-        </Button>
-      </CardContent>
-    </Card>
-  );
-};
-
-/**
- * Prévia do desconto. É só para a tela — quem calcula o valor gravado é o
- * `Core.Orders.Changes.BuildOrder`.
- */
-function previewDiscount(subtotal: number, type: DiscountType, rawValue: string): number {
-  const value = parseNumber(rawValue) ?? 0;
-  if (value <= 0) return 0;
-
-  if (type === "percent") return Math.min((subtotal * value) / 100, subtotal);
-  if (type === "amount") return Math.min(value, subtotal);
-  return 0;
 }

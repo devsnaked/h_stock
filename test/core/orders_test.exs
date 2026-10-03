@@ -8,6 +8,20 @@ defmodule Core.OrdersTest do
 
   defp stock_of(product), do: Ash.get!(Product, product.id, authorize?: false).stock_grams
 
+  defp a_prazo(actor, product, attrs \\ %{}) do
+    Orders.register_order(
+      Map.merge(
+        %{
+          items: [sale_item(product, 100)],
+          customer_name: "Dona Marta",
+          payment_due_on: Date.add(Core.Clock.today(), 15)
+        },
+        attrs
+      ),
+      actor: actor
+    )
+  end
+
   describe "registro do pedido" do
     test "calcula item, subtotal e total, e dá baixa no estoque" do
       employee = user_fixture()
@@ -373,6 +387,418 @@ defmodule Core.OrdersTest do
 
     test "funcionário não vê o do colega", %{order: order, outro: outro} do
       refute order.id in Enum.map(Orders.list_orders!(actor: outro), & &1.id)
+    end
+  end
+
+  describe "venda a prazo" do
+    setup do
+      %{employee: user_fixture(), product: product_fixture(stock_grams: 10_000)}
+    end
+
+    test "nasce em aberto com o dia combinado", %{employee: employee, product: product} do
+      due = Date.add(Core.Clock.today(), 15)
+      {:ok, order} = a_prazo(employee, product)
+
+      assert order.payment_due_on == due
+      assert order.paid_at == nil
+    end
+
+    test "vencimento hoje é aceito; ontem, não", %{employee: employee, product: product} do
+      today = Core.Clock.today()
+
+      assert {:ok, _order} = a_prazo(employee, product, %{payment_due_on: today})
+
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               a_prazo(employee, product, %{payment_due_on: Date.add(today, -1)})
+
+      assert Exception.message(error) =~ "não pode ser no passado"
+      # A venda recusada não pode ter dado baixa no estoque.
+      assert Decimal.equal?(stock_of(product), 9_900)
+    end
+
+    test "a prazo sem cliente é recusado; à vista, não", %{employee: employee, product: product} do
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               a_prazo(employee, product, %{customer_name: nil})
+
+      assert Exception.message(error) =~ "nome do cliente"
+
+      assert {:ok, _order} =
+               Orders.register_order(%{items: [sale_item(product, 100)]}, actor: employee)
+    end
+
+    test "dar baixa marca o pagamento uma vez só", %{employee: employee, product: product} do
+      {:ok, order} = a_prazo(employee, product)
+
+      {:ok, paid} = Orders.mark_paid(order, actor: employee)
+      assert paid.paid_at
+
+      assert {:error, %Ash.Error.Invalid{} = error} = Orders.mark_paid(paid, actor: employee)
+      assert Exception.message(error) =~ "já está pago"
+    end
+
+    test "venda à vista e venda cancelada não têm o que receber", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, cash} = Orders.register_order(%{items: [sale_item(product, 100)]}, actor: employee)
+      assert {:error, %Ash.Error.Invalid{}} = Orders.mark_paid(cash, actor: employee)
+
+      {:ok, order} = a_prazo(employee, product)
+      {:ok, cancelled} = Orders.cancel_order(order, %{}, actor: employee)
+      assert {:error, %Ash.Error.Invalid{}} = Orders.mark_paid(cancelled, actor: employee)
+    end
+
+    test "quem dá baixa é o balcão que alcança o pedido", %{employee: employee, product: product} do
+      driver = driver_fixture()
+      {:ok, order} = a_prazo(employee, product)
+      {:ok, order} = Orders.assign_driver(order, driver.id, actor: employee)
+
+      assert {:error, %Ash.Error.Forbidden{}} = Orders.mark_paid(order, actor: user_fixture())
+      assert {:error, %Ash.Error.Forbidden{}} = Orders.mark_paid(order, actor: driver)
+
+      gerente = user_fixture(can_manage_orders: true)
+      assert {:ok, _paid} = Orders.mark_paid(order, actor: gerente)
+    end
+
+    test "vencido é passar do dia sem pagar, no dia da loja", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, order} = a_prazo(employee, product)
+      due = order.payment_due_on
+
+      refute Orders.overdue?(order, due)
+      assert Orders.overdue?(order, Date.add(due, 1))
+
+      {:ok, paid} = Orders.mark_paid(order, actor: employee)
+      refute Orders.overdue?(paid, Date.add(due, 1))
+    end
+  end
+
+  describe "edição" do
+    setup do
+      %{employee: user_fixture(), product: product_fixture(stock_grams: 10_000)}
+    end
+
+    test "corrige cliente e observação e marca quem editou", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, order} =
+        Orders.register_order(
+          %{items: [sale_item(product, 100)], customer_name: "Dona Marta"},
+          actor: employee
+        )
+
+      gerente = user_fixture(can_manage_orders: true)
+
+      {:ok, edited} =
+        Orders.edit_order(order, %{customer_name: "Dona Rita", note: "portão azul"},
+          actor: gerente
+        )
+
+      assert edited.customer_name == "Dona Rita"
+      assert edited.note == "portão azul"
+      assert edited.edited_by_id == gerente.id
+      assert edited.edited_at
+      # Venda e estoque não se mexem.
+      assert Decimal.equal?(edited.total, order.total)
+      assert Decimal.equal?(stock_of(product), 9_900)
+    end
+
+    test "salvar sem mudar nada não marca o pedido como editado", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, order} =
+        Orders.register_order(
+          %{items: [sale_item(product, 100)], customer_name: "Dona Marta"},
+          actor: employee
+        )
+
+      {:ok, same} = Orders.edit_order(order, %{customer_name: "Dona Marta"}, actor: employee)
+      assert same.edited_at == nil
+      assert same.edited_by_id == nil
+    end
+
+    test "à vista vira a prazo, com as regras do registro", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, order} = Orders.register_order(%{items: [sale_item(product, 100)]}, actor: employee)
+      due = Date.add(Core.Clock.today(), 10)
+
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Orders.edit_order(order, %{payment_due_on: due}, actor: employee)
+
+      assert Exception.message(error) =~ "nome do cliente"
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Orders.edit_order(
+                 order,
+                 %{customer_name: "Seu Zé", payment_due_on: Date.add(Core.Clock.today(), -1)},
+                 actor: employee
+               )
+
+      {:ok, credit} =
+        Orders.edit_order(order, %{customer_name: "Seu Zé", payment_due_on: due}, actor: employee)
+
+      assert credit.payment_due_on == due
+    end
+
+    test "conta vencida continua editável sem mexer no vencimento", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, order} = a_prazo(employee, product)
+      vencido = Date.add(Core.Clock.today(), -5)
+
+      Core.Repo.query!("update orders set payment_due_on = ? where id = ?", [
+        Date.to_iso8601(vencido),
+        order.id
+      ])
+
+      order = Ash.get!(Orders.Order, order.id, authorize?: false)
+
+      assert {:ok, edited} =
+               Orders.edit_order(order, %{note: "ligar antes", payment_due_on: vencido},
+                 actor: employee
+               )
+
+      assert edited.payment_due_on == vencido
+    end
+
+    test "conta paga não troca a forma de pagamento", %{employee: employee, product: product} do
+      {:ok, order} = a_prazo(employee, product)
+      {:ok, paid} = Orders.mark_paid(order, actor: employee)
+
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Orders.edit_order(paid, %{payment_due_on: nil}, actor: employee)
+
+      assert Exception.message(error) =~ "não muda mais"
+    end
+
+    test "retirada não ganha endereço; cancelado não se edita", %{
+      employee: employee,
+      product: product
+    } do
+      {:ok, pickup} =
+        Orders.register_order(
+          %{items: [sale_item(product, 100)], delivery_status: :not_required},
+          actor: employee
+        )
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Orders.edit_order(pickup, %{delivery_address: "Rua A, 1"}, actor: employee)
+
+      {:ok, cancelled} = Orders.cancel_order(pickup, %{}, actor: employee)
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Orders.edit_order(cancelled, %{note: "x"}, actor: employee)
+    end
+
+    test "colega sem permissão e entregador não editam", %{employee: employee, product: product} do
+      driver = driver_fixture()
+      {:ok, order} = Orders.register_order(%{items: [sale_item(product, 100)]}, actor: employee)
+      {:ok, order} = Orders.assign_driver(order, driver.id, actor: employee)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               Orders.edit_order(order, %{note: "x"}, actor: user_fixture())
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               Orders.edit_order(order, %{note: "x"}, actor: driver)
+    end
+  end
+
+  describe "edição dos itens" do
+    setup do
+      employee = user_fixture()
+
+      cafe =
+        product_fixture(
+          name: "Café",
+          price_per_gram: "0.10",
+          stock_grams: 1_000,
+          cost_per_gram: "0.04"
+        )
+
+      cha =
+        product_fixture(
+          name: "Chá",
+          price_per_gram: "0.20",
+          stock_grams: 1_000,
+          cost_per_gram: "0.05"
+        )
+
+      {:ok, order} =
+        Orders.register_order(
+          %{
+            items: [sale_item(cafe, 300), sale_item(cha, 100)],
+            discount_type: :percent,
+            discount_value: 10
+          },
+          actor: employee
+        )
+
+      order = Ash.load!(order, :items, authorize?: false)
+      %{employee: employee, cafe: cafe, cha: cha, order: order}
+    end
+
+    defp line(order, product), do: Enum.find(order.items, &(&1.product_id == product.id))
+
+    defp remaining(batch),
+      do: Ash.get!(Core.Inventory.Batch, batch.id, authorize?: false).remaining_grams
+
+    test "muda peso, tira e inclui; estoque, totais e desconto acompanham", %{
+      employee: employee,
+      cafe: cafe,
+      cha: cha,
+      order: order
+    } do
+      canela = product_fixture(name: "Canela", price_per_gram: "0.30", stock_grams: 1_000)
+
+      # O café sobe de preço depois da venda: a linha dele continua com o
+      # preço congelado. A canela entra com o preço de agora.
+      {:ok, _} =
+        Core.Inventory.update_product(cafe, %{price_per_gram: Decimal.new("0.50")},
+          authorize?: false
+        )
+
+      {:ok, edited} =
+        Orders.edit_order(
+          order,
+          %{items: [%{id: line(order, cafe).id, grams: 500}, sale_item(canela, 100)]},
+          actor: employee
+        )
+
+      edited = Ash.load!(edited, :items, authorize?: false)
+
+      assert Decimal.equal?(remaining(batch_of(cafe)), 500)
+      assert Decimal.equal?(remaining(batch_of(cha)), 1_000)
+      assert Decimal.equal?(remaining(batch_of(canela)), 900)
+
+      assert Decimal.equal?(line(edited, cafe).grams, 500)
+      assert Decimal.equal?(line(edited, cafe).price_per_gram, "0.10")
+      assert Decimal.equal?(line(edited, cafe).total, "50.00")
+      assert line(edited, cha) == nil
+      assert Decimal.equal?(line(edited, canela).total, "30.00")
+
+      # 50 + 30 = 80, menos 10%.
+      assert Decimal.equal?(edited.subtotal, "80.00")
+      assert Decimal.equal?(edited.discount_total, "8.00")
+      assert Decimal.equal?(edited.total, "72.00")
+      # Custo: 500 × 0,04 + 100 × 0,02.
+      assert Decimal.equal?(edited.cost_total, "22.00")
+      assert edited.edited_by_id == employee.id
+
+      # Cancelar depois devolve o que o pedido tem agora, não o que tinha.
+      {:ok, _} = Orders.cancel_order(edited, %{}, actor: employee)
+      assert Decimal.equal?(remaining(batch_of(cafe)), 1_000)
+      assert Decimal.equal?(remaining(batch_of(canela)), 1_000)
+    end
+
+    test "o mesmo lote incluído de novo soma na linha que já existe", %{
+      employee: employee,
+      cafe: cafe,
+      cha: cha,
+      order: order
+    } do
+      {:ok, edited} =
+        Orders.edit_order(
+          order,
+          %{
+            items: [
+              %{id: line(order, cafe).id, grams: 300},
+              sale_item(cafe, 200),
+              %{id: line(order, cha).id, grams: 100}
+            ]
+          },
+          actor: employee
+        )
+
+      edited = Ash.load!(edited, :items, authorize?: false)
+      assert length(edited.items) == 2
+      assert Decimal.equal?(line(edited, cafe).grams, 500)
+      assert Decimal.equal?(remaining(batch_of(cafe)), 500)
+    end
+
+    test "sem saldo no lote, nada muda", %{employee: employee, cafe: cafe, order: order} do
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Orders.edit_order(order, %{items: [%{id: line(order, cafe).id, grams: 1_200}]},
+                 actor: employee
+               )
+
+      assert Exception.message(error) =~ "estoque insuficiente"
+      reloaded = Ash.get!(Orders.Order, order.id, authorize?: false, load: :items)
+      assert length(reloaded.items) == 2
+      assert Decimal.equal?(reloaded.total, order.total)
+      assert Decimal.equal?(remaining(batch_of(cafe)), 700)
+    end
+
+    test "pedido não fica sem item, e conta paga não muda de valor", %{
+      employee: employee,
+      cafe: cafe
+    } do
+      {:ok, order} =
+        Orders.register_order(
+          %{
+            items: [sale_item(cafe, 100)],
+            customer_name: "Zé",
+            payment_due_on: Core.Clock.today()
+          },
+          actor: employee
+        )
+
+      order = Ash.load!(order, :items, authorize?: false)
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               Orders.edit_order(order, %{items: []}, actor: employee)
+
+      {:ok, paid} = Orders.mark_paid(order, actor: employee)
+
+      assert {:error, %Ash.Error.Invalid{} = error} =
+               Orders.edit_order(paid, %{items: [%{id: hd(order.items).id, grams: 200}]},
+                 actor: employee
+               )
+
+      assert Exception.message(error) =~ "itens não mudam"
+
+      # Mandar os mesmos itens de volta não é mudança: a conta paga continua
+      # editável no resto.
+      assert {:ok, _} =
+               Orders.edit_order(
+                 paid,
+                 %{note: "ok", items: [%{id: hd(order.items).id, grams: 100}]},
+                 actor: employee
+               )
+    end
+
+    test "o log diz o que mudou nos itens e guarda as linhas de antes", %{
+      employee: employee,
+      cafe: cafe,
+      order: order
+    } do
+      admin = admin_fixture()
+
+      {:ok, _} =
+        Orders.edit_order(order, %{items: [%{id: line(order, cafe).id, grams: 200}]},
+          actor: employee
+        )
+
+      entry =
+        Core.Audit.Entry
+        |> Ash.Query.sort(inserted_at: :desc)
+        |> Ash.Query.limit(1)
+        |> Ash.read_one!(actor: admin)
+
+      assert entry.action == :order_updated
+      assert entry.summary =~ "Café (Lote inicial): 300g → 200g"
+      assert entry.summary =~ "Item removido: Chá (Lote inicial), 100g"
+      assert entry.summary =~ "Total alterado de R$ 45,00 para R$ 18,00"
+
+      antes = entry.details["antes"] || entry.details[:antes]
+      itens = antes["items"] || antes[:items]
+      assert length(itens) == 2
     end
   end
 

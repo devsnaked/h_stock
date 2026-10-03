@@ -73,10 +73,29 @@ renderização de páginas aqui.
   existe). As coordenadas (`delivery_lat/lon`) são gravadas junto quando a
   pessoa escolhe o ponto no mapa; a geocodificação (`Core.Geocoding`) é
   opcional — serviço fora do ar não pode impedir a venda.
+- **Venda a prazo é o pedido com `payment_due_on`.** Sem ele, a venda é à
+  vista e não há o que receber. A prazo exige o nome do cliente e vencimento
+  de hoje em diante (dia da loja); fica em aberto (`paid_at` vazio) até
+  `:mark_paid`, que tem a régua do cancelamento (quem registrou ou
+  `can_manage_orders`; entregador não dá baixa). "Vencido" é
+  `Core.Orders.overdue?/2`, nunca conta feita na tela. "Não pagos" é
+  completo + a prazo + sem baixa — à vista e cancelado ficam de fora.
+- **Pedido se edita, e o estoque anda junto.** `Order.edit` mexe em
+  cliente, observação, endereço/ponto, forma de pagamento e itens (peso,
+  incluir, tirar — `Changes.EditItems`). Peso a mais sai do lote, peso a
+  menos e linha tirada voltam **ao mesmo lote**, na transação da edição.
+  Linha que já existia guarda preço e custo da venda; linha nova copia os de
+  agora; lote que já está no pedido é sempre a mesma linha. O desconto é o
+  que o pedido tinha, refeito sobre o novo subtotal. Retirada não ganha
+  endereço, cancelado não se edita, conta paga não troca forma de pagamento
+  nem itens, e vencimento só é validado (hoje em diante) quando muda. Régua
+  do cancelamento. Quem editou (`edited_by`/`edited_at`) e o estado anterior
+  (log `:order_updated`, com `antes`/`depois`, itens inclusos) são **só do
+  admin**: o serializer só manda os campos com `edits: true`.
 - **O painel é permissão, e cada seção dele também.** `can_view_dashboard`
-  abre a home; `dashboard_sections` diz quais das oito seções (mapa, vendas,
-  horários, produtos, equipe, entrega, estoque, últimos pedidos) existem para
-  a pessoa. A lista canônica é `Core.Accounts.Permissions` — seção nova entra
+  abre a home; `dashboard_sections` diz quais das nove seções (mapa, vendas,
+  a prazo, horários, produtos, equipe, entrega, estoque, últimos pedidos)
+  existem para a pessoa. A lista canônica é `Core.Accounts.Permissions` — seção nova entra
   ali e aparece no recurso, no controller e no formulário de permissões, sem
   migração. Quem não abre o painel tem a home nos pedidos
   (`RequireDashboard`), e **seção fechada não é escondida na tela: ela não
@@ -232,7 +251,8 @@ pontos de registro já existentes:
 - `Core.Inventory.Changes.LogProductChange` — cadastro e alteração de produto
   (só o que de fato mudou vira linha).
 - `Core.Orders.Changes.LogOrderEvent` — venda, cancelamento, despacho,
-  saída, entrega e reabertura.
+  saída, entrega, reabertura, baixa de venda a prazo e edição (esta só
+  quando algo de fato mudou, com o retrato do pedido antes e depois).
 
 Três coisas a respeitar ao mexer nisso:
 
@@ -270,6 +290,9 @@ Ação nova na lista exige três lugares: a constraint `one_of` de
   tela, `assets/js/components/Pagination.tsx`.
 - Props chegam ao React em camelCase (`camelize_props: true`), mesmo escritos
   em snake_case no Elixir. Structs do domínio passam por `Web.Serializers`.
+  Os erros de validação também chegam camelizados (`customerName`): leia-os
+  por `fieldErrors(form.errors)` (`assets/js/lib/errors.ts`), que devolve as
+  chaves em snake_case, nunca direto de `useForm().errors`.
 - Props compartilhados (`user`, `csrfToken`, `flash`) vêm do
   `Web.Plugs.SetCurrentUser` — não os repita nos controllers.
 - **Os seeds criam só o administrador em produção**; em desenvolvimento criam

@@ -9,6 +9,13 @@ defmodule Core.Orders.Order do
 
   O custo vem do lote escolhido em cada item, congelado na venda; é dele que
   sai o `profit`.
+
+  **Venda a prazo** é a que nasce com `payment_due_on` (o dia combinado com o
+  cliente). Sem ele, a venda é à vista: foi paga no balcão, e não há o que
+  receber. Um pedido a prazo fica em aberto (`paid_at` vazio) até alguém do
+  balcão dizer que o dinheiro entrou (`:mark_paid`) — e vencido quando o dia
+  combinado passa sem isso. O "hoje" do vencimento é o da loja
+  (`Core.Clock`).
   """
   use Ash.Resource,
     otp_app: :h_stock,
@@ -23,6 +30,7 @@ defmodule Core.Orders.Order do
     references do
       reference :user, on_delete: :restrict
       reference :driver, on_delete: :nilify
+      reference :edited_by, on_delete: :nilify
     end
   end
 
@@ -75,12 +83,25 @@ defmodule Core.Orders.Order do
         :delivery_status,
         :delivery_address,
         :delivery_lat,
-        :delivery_lon
+        :delivery_lon,
+        :payment_due_on
       ]
 
       # Um pedido nasce esperando entrega ou sem entrega nenhuma (retirada no
       # balcão). "Saiu" e "entregue" são passos posteriores, com hora própria.
       validate one_of(:delivery_status, [:pending, :not_required])
+
+      # Combinar o pagamento para ontem é erro de digitação: a venda a prazo
+      # já nasceria vencida.
+      validate compare(:payment_due_on, greater_than_or_equal_to: &Core.Clock.today/0) do
+        message "a data do pagamento não pode ser no passado"
+      end
+
+      # Dívida sem devedor não se cobra: a venda a prazo precisa dizer quem
+      # vai pagar.
+      validate present(:customer_name),
+        where: [present(:payment_due_on)],
+        message: "venda a prazo precisa do nome do cliente"
 
       argument :items, {:array, :map} do
         description "Lista de `%{product_id: uuid, batch_id: uuid, grams: decimal}`."
@@ -207,6 +228,96 @@ defmodule Core.Orders.Order do
       change Core.Orders.Changes.ReturnStock
       change {Core.Orders.Changes.LogOrderEvent, action: :order_cancelled}
     end
+
+    update :mark_paid do
+      # O log descreve o pedido depois da ação, e ler o registro é o que o
+      # update atômico dispensa fazer.
+      require_atomic? false
+
+      description "Venda a prazo: o cliente pagou."
+      accept []
+
+      validate attribute_equals(:status, :completed) do
+        message "pedido cancelado não tem o que receber"
+      end
+
+      validate present(:payment_due_on) do
+        message "este pedido foi pago à vista"
+      end
+
+      validate absent(:paid_at) do
+        message "este pedido já está pago"
+      end
+
+      # Baixa e linha do log são uma escrita só: dívida quitada sem registro
+      # de quem recebeu é o buraco que o log existe para fechar.
+      change Core.Changes.InTransaction
+      change set_attribute(:paid_at, &DateTime.utc_now/0)
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_paid}
+    end
+
+    update :edit do
+      description """
+      Corrige o pedido: cliente, observação, endereço, forma de pagamento e
+      os itens (peso, incluir, tirar) — com o estoque acompanhando lote a
+      lote. O desconto continua o que era, refeito sobre o novo subtotal.
+      """
+
+      # O log compara o pedido antes e depois, e ler o registro é o que o
+      # update atômico dispensa fazer.
+      require_atomic? false
+
+      accept [
+        :customer_name,
+        :note,
+        :delivery_address,
+        :delivery_lat,
+        :delivery_lon,
+        :payment_due_on
+      ]
+
+      argument :items, {:array, :map} do
+        description """
+        Lista final dos itens. `%{id, grams}` para linha que já estava,
+        `%{product_id, batch_id, grams}` para linha nova. Ausente: itens não
+        mudam. Ver `Core.Orders.Changes.EditItems`.
+        """
+      end
+
+      validate attribute_equals(:status, :completed) do
+        message "pedido cancelado não pode ser editado"
+      end
+
+      # Retirada no balcão não tem para onde ir.
+      validate absent([:delivery_address, :delivery_lat, :delivery_lon]),
+        where: [attribute_equals(:delivery_status, :not_required)],
+        message: "pedido de retirada no balcão não tem endereço"
+
+      # Depois da baixa, a forma de pagamento é história: trocar o vencimento
+      # de uma conta já paga reescreveria se ela foi paga em dia.
+      validate absent(:paid_at),
+        where: [changing(:payment_due_on)],
+        message: "o pagamento já foi registrado; a forma de pagamento não muda mais"
+
+      # Só o vencimento que muda precisa ser de hoje em diante: editar a
+      # observação de uma conta vencida não pode ser recusado por ela estar
+      # vencida.
+      validate compare(:payment_due_on, greater_than_or_equal_to: &Core.Clock.today/0),
+        where: [changing(:payment_due_on)],
+        message: "a data do pagamento não pode ser no passado"
+
+      validate present(:customer_name),
+        where: [present(:payment_due_on)],
+        message: "venda a prazo precisa do nome do cliente"
+
+      # Edição, itens, estoque e linha do log são uma escrita só: pedido
+      # alterado sem o estoque acompanhar, ou sem registro de quem alterou e
+      # do que havia antes, é o que isto impede.
+      change Core.Changes.InTransaction
+      change Core.Orders.Changes.EditItems
+      change Core.Orders.Changes.MarkEdited
+      change {Core.Orders.Changes.LogOrderEvent, action: :order_updated}
+    end
   end
 
   policies do
@@ -237,6 +348,15 @@ defmodule Core.Orders.Order do
     # Despachar e reabrir são do balcão — o entregador recebe o pedido, não
     # decide quem o leva.
     policy action([:assign_driver, :reopen_delivery]) do
+      authorize_if actor_attribute_equals(:role, :admin)
+      authorize_if actor_attribute_equals(:can_manage_orders, true)
+      authorize_if expr(user_id == ^actor(:id))
+    end
+
+    # Receber e editar são do balcão, com a mesma régua de cancelar: quem
+    # registrou a venda ou quem alcança os pedidos da equipe. O entregador
+    # leva a mercadoria, não dá baixa em dívida nem reescreve o pedido.
+    policy action([:mark_paid, :edit]) do
       authorize_if actor_attribute_equals(:role, :admin)
       authorize_if actor_attribute_equals(:can_manage_orders, true)
       authorize_if expr(user_id == ^actor(:id))
@@ -374,6 +494,23 @@ defmodule Core.Orders.Order do
       public? true
     end
 
+    # Pagamento. Vazio é venda à vista — paga no balcão, nada a receber.
+    # Preenchido, é o dia combinado com o cliente, no calendário da loja.
+    attribute :payment_due_on, :date do
+      description "Vencimento da venda a prazo. Vazio: venda à vista."
+      public? true
+    end
+
+    attribute :paid_at, :utc_datetime_usec do
+      description "Quando a venda a prazo foi paga. Vazio: em aberto."
+      public? true
+    end
+
+    attribute :edited_at, :utc_datetime_usec do
+      description "Última edição (`:edit`) que de fato mudou alguma coisa."
+      public? true
+    end
+
     create_timestamp :inserted_at
     update_timestamp :updated_at
   end
@@ -386,6 +523,15 @@ defmodule Core.Orders.Order do
 
     belongs_to :driver, Core.Accounts.User do
       description "Entregador que recebeu o pedido. Vazio enquanto está na fila."
+      allow_nil? true
+    end
+
+    belongs_to :edited_by, Core.Accounts.User do
+      description """
+      Quem fez a última edição. O histórico completo — cada edição, com o
+      que havia antes — está no log de auditoria.
+      """
+
       allow_nil? true
     end
 

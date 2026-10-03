@@ -1,6 +1,6 @@
 import * as React from "react";
-import { useForm } from "@inertiajs/react";
-import { Bike, MapPin, Navigation } from "lucide-react";
+import { Link, useForm } from "@inertiajs/react";
+import { Bike, CalendarClock, MapPin, Navigation, Pencil } from "lucide-react";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,9 +25,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DeliveryBadge } from "@/components/DeliveryBadge";
+import { PaymentBadge } from "@/components/PaymentBadge";
 import { AddressMap } from "@/components/AddressMap";
 import { useAuth } from "@/hooks/useAuth";
-import { dateTimeLabel, money, unitPrice, weight } from "@/lib/format";
+import { dateLabel, dateTimeLabel, money, unitPrice, weight } from "@/lib/format";
 import type { Driver, Order } from "@/types";
 
 type Props = { order: Order; drivers: Driver[] };
@@ -56,6 +57,11 @@ export default function OrderShow({ order, drivers }: Props) {
         {!cancelled && order.deliveryStatus !== "not_required" && (
           <Delivery order={order} drivers={drivers} />
         )}
+
+        {/* Venda a prazo: quando vence e se já entrou. Fica logo abaixo da
+            entrega porque, num pedido a prazo, dar baixa é a outra coisa que
+            se vem fazer nesta tela. */}
+        {order.paymentDueOn !== null && <Payment order={order} />}
 
         <Card>
           <CardHeader>
@@ -125,6 +131,7 @@ export default function OrderShow({ order, drivers }: Props) {
           <CardContent className="space-y-2 p-4 text-sm">
             <Row label="Cliente" value={order.customerName ?? "não informado"} />
             <Row label="Registrado por" value={order.userName ?? "—"} />
+            {order.paymentDueOn === null && <Row label="Pagamento" value="à vista" />}
             {order.deliveryStatus === "not_required" && (
               <Row label="Entrega" value="retirada no balcão" />
             )}
@@ -139,16 +146,126 @@ export default function OrderShow({ order, drivers }: Props) {
                 )
               }
             />
+
+            {/* Só o admin recebe estes campos — para os outros o servidor nem
+                os manda. O que havia antes de cada edição está no log. */}
+            {order.editedAt && (
+              <div className="border-t border-border pt-2">
+                <Row
+                  label="Editado"
+                  value={`${order.editedByName ?? "—"} · ${dateTimeLabel(order.editedAt)}`}
+                />
+                <Link
+                  href={`/auditoria?tipo=pedidos&busca=${order.code}`}
+                  className="mt-1 block text-right text-xs font-medium underline underline-offset-4"
+                >
+                  ver o que mudou
+                </Link>
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* O entregador abre esta tela para saber para onde ir; cancelar
-            venda é do balcão. */}
-        {!cancelled && !isDriver && <CancelDialog order={order} />}
+        {/* O entregador abre esta tela para saber para onde ir; editar e
+            cancelar venda são do balcão. */}
+        {!cancelled && !isDriver && (
+          <div className="grid gap-2">
+            <Button asChild variant="outline" className="w-full">
+              <Link href={`/pedidos/${order.id}/editar`}>
+                <Pencil className="size-4" />
+                Editar pedido
+              </Link>
+            </Button>
+            <CancelDialog order={order} />
+          </div>
+        )}
       </div>
     </AppLayout>
   );
 }
+
+/**
+ * Venda a prazo: o dia combinado, a baixa e o botão de dar baixa.
+ *
+ * Baixa é do balcão — o entregador abre esta tela para entregar, não para
+ * receber. Pedido cancelado mostra o vencimento só como histórico: não deve
+ * nada, então não há o que receber.
+ */
+const Payment: React.FC<{ order: Order }> = ({ order }) => {
+  const { isDriver } = useAuth();
+  const open = order.status === "completed" && order.paidAt === null;
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <CalendarClock className="size-4 text-muted-foreground" />
+          Pagamento a prazo
+        </CardTitle>
+        <PaymentBadge order={order} />
+      </CardHeader>
+
+      <CardContent className="space-y-3 text-sm">
+        <Row label="Vence em" value={dateLabel(order.paymentDueOn ?? "")} />
+        {order.paidAt !== null && <Row label="Pago em" value={dateTimeLabel(order.paidAt)} />}
+
+        {order.paymentOverdue && (
+          <p className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning-foreground">
+            O dia combinado já passou e o pagamento ainda não foi registrado.
+          </p>
+        )}
+
+        {open && !isDriver && <MarkPaidDialog order={order} />}
+      </CardContent>
+    </Card>
+  );
+};
+
+/**
+ * Dar baixa pede confirmação — não há desfazer na tela, e um toque errado
+ * deixaria de cobrar quem ainda deve. É uma folha (`Dialog`), e não o
+ * `AlertDialog`, porque receber não é destrutivo: o botão é o principal, não
+ * o vermelho.
+ */
+const MarkPaidDialog: React.FC<{ order: Order }> = ({ order }) => {
+  const [open, setOpen] = React.useState(false);
+  const { post, processing } = useForm({});
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="lg" className="w-full">
+          Marcar como pago
+        </Button>
+      </DialogTrigger>
+
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>O pedido {order.code} foi pago?</DialogTitle>
+          <DialogDescription>
+            {money(order.total)}
+            {order.customerName ? ` de ${order.customerName}` : ""}. O pedido sai da lista
+            de não pagos, e a baixa fica registrada com o seu nome.
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">Voltar</Button>
+          </DialogClose>
+          <Button
+            disabled={processing}
+            onClick={() =>
+              post(`/pedidos/${order.id}/pagamento`, { onSuccess: () => setOpen(false) })
+            }
+          >
+            {processing ? "Registrando..." : "Confirmar pagamento"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 /**
  * Controle da entrega: para onde vai, quem está levando, o que já aconteceu e

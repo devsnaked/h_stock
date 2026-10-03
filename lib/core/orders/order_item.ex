@@ -46,6 +46,18 @@ defmodule Core.Orders.OrderItem do
         :order_id
       ]
     end
+
+    # As duas existem só para a edição do pedido (`Core.Orders.Changes.EditItems`),
+    # que já acerta o estoque do lote na mesma transação. Preço e custo da
+    # grama continuam os congelados na venda: muda o peso, e os totais
+    # acompanham.
+    update :resize do
+      accept [:grams, :total, :total_cost]
+    end
+
+    destroy :destroy do
+      primary? true
+    end
   end
 
   policies do
@@ -59,9 +71,16 @@ defmodule Core.Orders.OrderItem do
       authorize_if expr(order.driver_id == ^actor(:id))
     end
 
-    # Itens só são criados junto do pedido, pela ação `:register`.
+    # Itens são criados junto do pedido, pela ação `:register`.
     policy action_type(:create) do
       authorize_if actor_present()
+    end
+
+    # Mudar ou tirar item só por dentro da edição do pedido, que já passou
+    # pela régua dele e chama sem autorização própria. Direto, ninguém mexe:
+    # item alterado sem o estoque acompanhar é o que não pode existir.
+    policy action_type([:update, :destroy]) do
+      forbid_if always()
     end
   end
 

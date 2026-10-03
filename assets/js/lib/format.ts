@@ -99,6 +99,19 @@ export const unitLabel = (unit: Unit) => (unit === "kg" ? "kg" : "g");
 
 export const dateTimeLabel = (iso: string) => dateTime.format(new Date(iso));
 
+/**
+ * Data sem hora (`2026-10-10` -> `10/10/2026`), montada a partir do texto.
+ * `new Date("2026-10-10")` é meia-noite em UTC, que no Brasil ainda é o dia
+ * anterior — o vencimento apareceria um dia antes do combinado.
+ */
+export const dateLabel = (iso: string) => iso.slice(0, 10).split("-").reverse().join("/");
+
+const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+/** Mês de um `2026-10` como se fala: `out/2026`. */
+export const monthLabel = (month: string) =>
+  `${MONTHS[Number(month.slice(5, 7)) - 1]}/${month.slice(0, 4)}`;
+
 /** Tira zeros à direita: 1,50 -> 1,5 e 2,00 -> 2. */
 function trim(value: number): string {
   return value

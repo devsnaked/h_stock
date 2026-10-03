@@ -447,6 +447,11 @@ const DASHBOARD_SECTIONS: {
     label: "Vendas",
     hint: "Faturamento, ticket médio, cancelamentos e a série por dia.",
   },
+  {
+    value: "receivables",
+    label: "Vendas a prazo",
+    hint: "Quanto os clientes devem, o que já venceu e o que entrou de pagamento.",
+  },
   { value: "hours", label: "Horários", hint: "A que horas a loja vende." },
   {
     value: "products",

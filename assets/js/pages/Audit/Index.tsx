@@ -7,6 +7,7 @@ import {
   Bike,
   CheckCheck,
   Coins,
+  HandCoins,
   PackagePlus,
   Pencil,
   Receipt,
@@ -93,6 +94,12 @@ const LOOK: Record<
     label: "Entregue",
   },
   order_reopened: { icon: Undo2, tone: "text-amber-600 dark:text-amber-400", label: "Reaberto" },
+  order_paid: {
+    icon: HandCoins,
+    tone: "text-emerald-600 dark:text-emerald-400",
+    label: "Pago",
+  },
+  order_updated: { icon: Pencil, tone: "text-muted-foreground", label: "Pedido editado" },
 };
 
 export default function AuditIndex({

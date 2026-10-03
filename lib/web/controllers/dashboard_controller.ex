@@ -8,11 +8,11 @@ defmodule Web.DashboardController do
   existem para quem está olhando.
 
   **Tudo é buscado por seção, sob demanda.** Cada bloco do painel (mapa,
-  vendas, horários, produtos, equipe, entrega, estoque, últimos pedidos) é um
-  `inertia_optional`: não sai daqui no carregamento inicial, e só é calculado
-  quando a tela pede aquele bloco — o que o front faz quando ele se aproxima
-  da área visível. Assim uma seção pesada não segura as outras, e o que
-  ninguém rolou até o fim nem chega a ser consultado no banco.
+  vendas, a prazo, horários, produtos, equipe, entrega, estoque, últimos
+  pedidos) é um `inertia_optional`: não sai daqui no carregamento inicial, e
+  só é calculado quando a tela pede aquele bloco — o que o front faz quando
+  ele se aproxima da área visível. Assim uma seção pesada não segura as
+  outras, e o que ninguém rolou até o fim nem chega a ser consultado no banco.
 
   **Seção sem permissão não é escondida na tela: ela não existe.** Os props
   são montados percorrendo as seções liberadas para o ator
@@ -63,6 +63,9 @@ defmodule Web.DashboardController do
 
   defp data(:sales, %{user: user, from: from, to: to, costs: costs}),
     do: Analytics.sales(user, from, to, costs)
+
+  defp data(:receivables, %{user: user, from: from, to: to}),
+    do: Analytics.receivables(user, from, to)
 
   defp data(:hours, %{user: user, from: from, to: to}), do: Analytics.hours(user, from, to)
 

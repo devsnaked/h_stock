@@ -2,6 +2,7 @@ defmodule Web.DashboardControllerTest do
   use Web.ConnCase, async: true
 
   import Inertia.Testing
+  import Ecto.Query
   import Core.Fixtures
 
   alias Core.Accounts.Permissions
@@ -242,6 +243,64 @@ defmodule Web.DashboardControllerTest do
 
       assert [%{date: ^ontem, orders: 0, revenue: +0.0}] = props.sales.daily
       assert props.sales.totals.ticket == +0.0
+    end
+
+    test "a prazo: o que está em aberto agora e o que entrou no período", %{conn: conn} do
+      admin = admin_fixture()
+      employee = user_fixture(can_view_dashboard: true, dashboard_sections: [:receivables])
+      product = product_fixture(price_per_gram: "0.10", stock_grams: 10_000)
+      today = Clock.today()
+
+      a_prazo = fn actor, grams, due ->
+        {:ok, order} =
+          Orders.register_order(
+            %{items: [sale_item(product, grams)], customer_name: "Seu Zé", payment_due_on: due},
+            actor: actor
+          )
+
+        order
+      end
+
+      _semana = a_prazo.(admin, 100, Date.add(today, 3))
+      _longe = a_prazo.(admin, 200, Date.add(today, 40))
+      pago = a_prazo.(admin, 300, Date.add(today, 10))
+      {:ok, _} = Orders.mark_paid(pago, actor: admin)
+      vencido = a_prazo.(admin, 400, today)
+      _a_vista = sale(admin, product, 1_000)
+      _do_funcionario = a_prazo.(employee, 500, Date.add(today, 3))
+
+      # O domínio não aceita prazo no passado: o vencido é a venda de dias
+      # atrás, e o atraso é escrito direto no banco.
+      Core.Repo.update_all(
+        from(o in "orders", where: o.id == type(^vencido.id, :binary_id)),
+        set: [payment_due_on: Date.add(today, -4)]
+      )
+
+      props = inertia_props(get_partial(log_in(conn, admin), ~p"/", "Dashboard", ["receivables"]))
+      r = props.receivables
+
+      # Em aberto: 10 + 20 + 40 + 50 (o pago não entra).
+      assert r.open == %{orders: 4, total: 120.0}
+      assert r.overdue == %{orders: 1, total: 40.0}
+      assert r.dueSoon == %{orders: 2, total: 60.0}
+
+      assert [%{id: id, daysLate: 4, total: 40.0}] = r.overdueOrders
+      assert id == vencido.id
+
+      # No período (hoje): 150 a prazo de 250 vendidos, 30 recebidos em dia.
+      assert r.period.orders == 5
+      assert r.period.total == 150.0
+      assert r.period.share == 150.0 / 250.0
+      assert r.period.received == %{orders: 1, total: 30.0}
+      assert r.period.receivedLate == 0
+
+      assert Enum.sum(Enum.map(r.schedule, & &1.total)) == 120.0
+
+      # O funcionário vê só o que ele mesmo vendeu a prazo.
+      seus =
+        inertia_props(get_partial(log_in(conn, employee), ~p"/", "Dashboard", ["receivables"]))
+
+      assert seus.receivables.open == %{orders: 1, total: 50.0}
     end
   end
 

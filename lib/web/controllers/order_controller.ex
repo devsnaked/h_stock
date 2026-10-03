@@ -20,15 +20,17 @@ defmodule Web.OrderController do
   def index(conn, params) do
     user = actor(conn)
     filter = params["entrega"]
+    unpaid? = params["pagamento"] == "pendente"
     search = presence(params["busca"])
     number = page_number(params["pagina"])
 
     page =
       Order
       |> delivery_filter(filter)
+      |> payment_filter(unpaid?)
       |> period_filter(params)
       |> search_filter(search)
-      |> Ash.Query.sort(inserted_at: :desc)
+      |> sort(unpaid?)
       |> Ash.Query.load([:user, :driver, :items_count])
       |> Ash.read!(
         actor: user,
@@ -41,6 +43,7 @@ defmodule Web.OrderController do
       Enum.map(page.results, &Serializers.order(&1, costs: manages_stock?(user)))
     )
     |> assign_prop(:filter, filter || "todos")
+    |> assign_prop(:unpaid, unpaid?)
     |> assign_prop(:search, search || "")
     |> assign_prop(:manages_orders, manages_orders?(user))
     |> assign_prop(:page, %{
@@ -106,6 +109,22 @@ defmodule Web.OrderController do
 
   defp period_filter(query, _params), do: query
 
+  # "Não pagos" é o que ainda falta receber: venda a prazo, valendo, sem
+  # baixa. À vista já foi paga no balcão, e cancelado não deve nada.
+  defp payment_filter(query, false), do: query
+
+  defp payment_filter(query, true) do
+    Ash.Query.filter(
+      query,
+      status == :completed and not is_nil(payment_due_on) and is_nil(paid_at)
+    )
+  end
+
+  # Na cobrança, a pergunta é "quem vence primeiro": a lista de não pagos sai
+  # pelo vencimento, o mais atrasado no topo. O resto segue do mais recente.
+  defp sort(query, true), do: Ash.Query.sort(query, payment_due_on: :asc, inserted_at: :desc)
+  defp sort(query, false), do: Ash.Query.sort(query, inserted_at: :desc)
+
   @doc """
   Tela de montar pedido.
 
@@ -115,21 +134,27 @@ defmodule Web.OrderController do
   """
   def new(conn, _params) do
     user = actor(conn)
-    costs = manages_stock?(user)
-
-    products =
-      Product
-      |> Ash.Query.filter(active == true and stock_grams > 0)
-      |> Ash.Query.sort(name: :asc)
-      |> Ash.Query.load(:open_batches)
-      |> Ash.read!(actor: user)
 
     conn
-    |> assign_prop(:products, Enum.map(products, &with_batches(&1, costs)))
+    |> assign_prop(:products, sellable_products(user, manages_stock?(user)))
     # A venda já pode sair com entregador definido — a lista vai junto, e é
     # curta (só quem está ativo).
     |> assign_prop(:drivers, drivers(user))
+    # O vencimento da venda a prazo é escolhido num calendário que começa
+    # hoje — o hoje da loja, não o do aparelho.
+    |> assign_prop(:today, Date.to_iso8601(Core.Clock.today()))
     |> render_inertia("Orders/New")
+  end
+
+  # O que pode entrar num pedido: produto ativo, com os lotes que ainda têm
+  # saldo.
+  defp sellable_products(user, costs) do
+    Product
+    |> Ash.Query.filter(active == true and stock_grams > 0)
+    |> Ash.Query.sort(name: :asc)
+    |> Ash.Query.load(:open_batches)
+    |> Ash.read!(actor: user)
+    |> Enum.map(&with_batches(&1, costs))
   end
 
   defp with_batches(product, costs) do
@@ -140,13 +165,15 @@ defmodule Web.OrderController do
 
   def show(conn, %{"id" => id}) do
     user = actor(conn)
+    admin? = user.role == :admin
+    load = if admin?, do: [:user, :driver, :items, :edited_by], else: [:user, :driver, :items]
 
-    case fetch(Order, id, actor: user, load: [:user, :driver, :items]) do
+    case fetch(Order, id, actor: user, load: load) do
       {:ok, order} ->
         conn
         |> assign_prop(
           :order,
-          Serializers.order(order, with_items: true, costs: manages_stock?(user))
+          Serializers.order(order, with_items: true, costs: manages_stock?(user), edits: admin?)
         )
         # A lista de entregadores é cara à toa numa tela que quase sempre só
         # exibe o pedido: vai como função, então só é buscada quando a página
@@ -209,39 +236,136 @@ defmodule Web.OrderController do
   end
 
   def create(conn, params) do
-    case build_items(params["items"]) do
-      {:ok, items} ->
-        delivery? = params["needs_delivery"] != false
+    with {:ok, items} <- build_items(params["items"]),
+         {:ok, due_on} <- payment_due_on(params) do
+      delivery? = params["needs_delivery"] != false
 
-        attrs = %{
-          items: items,
-          customer_name: presence(params["customer_name"]),
-          note: presence(params["note"]),
-          discount_type: params["discount_type"] || "none",
-          discount_value: to_decimal(params["discount_value"]) || Decimal.new(0),
-          delivery_status: if(delivery?, do: :pending, else: :not_required),
-          # Retirada no balcão não guarda endereço: se a pessoa desligou a
-          # entrega depois de digitar, o que vale é o último gesto dela.
-          delivery_address: if(delivery?, do: presence(params["delivery_address"])),
-          delivery_lat: if(delivery?, do: coordinate(params["delivery_lat"])),
-          delivery_lon: if(delivery?, do: coordinate(params["delivery_lon"])),
-          # Entregador escolhido na hora da venda. Sem entrega não há para
-          # quem mandar, e o domínio recusaria a combinação.
-          driver_id: if(delivery?, do: presence(params["driver_id"]))
-        }
+      attrs = %{
+        items: items,
+        customer_name: presence(params["customer_name"]),
+        note: presence(params["note"]),
+        discount_type: params["discount_type"] || "none",
+        discount_value: to_decimal(params["discount_value"]) || Decimal.new(0),
+        delivery_status: if(delivery?, do: :pending, else: :not_required),
+        # Retirada no balcão não guarda endereço: se a pessoa desligou a
+        # entrega depois de digitar, o que vale é o último gesto dela.
+        delivery_address: if(delivery?, do: presence(params["delivery_address"])),
+        delivery_lat: if(delivery?, do: coordinate(params["delivery_lat"])),
+        delivery_lon: if(delivery?, do: coordinate(params["delivery_lon"])),
+        # Entregador escolhido na hora da venda. Sem entrega não há para
+        # quem mandar, e o domínio recusaria a combinação.
+        driver_id: if(delivery?, do: presence(params["driver_id"])),
+        payment_due_on: due_on
+      }
 
-        case Orders.register_order(attrs, actor: actor(conn)) do
-          {:ok, order} ->
-            conn
-            |> put_flash(:info, "Pedido #{Orders.code(order)} registrado.")
-            |> redirect(to: ~p"/pedidos/#{order.id}")
+      case Orders.register_order(attrs, actor: actor(conn)) do
+        {:ok, order} ->
+          conn
+          |> put_flash(:info, "Pedido #{Orders.code(order)} registrado.")
+          |> redirect(to: ~p"/pedidos/#{order.id}")
 
-          {:error, error} ->
-            fail(conn, error, ~p"/pedidos/novo")
-        end
+        {:error, error} ->
+          fail(conn, error, ~p"/pedidos/novo")
+      end
+    else
+      {:error, error} -> fail(conn, error, ~p"/pedidos/novo")
+    end
+  end
+
+  # À vista não leva data, mesmo que a pessoa tenha escolhido uma antes de
+  # voltar atrás: vale o último gesto, como no endereço da retirada. A prazo
+  # sem data é pergunta sem resposta — o domínio aceitaria (viraria à vista),
+  # e a venda que devia ser cobrada sumiria da lista de cobrança.
+  defp payment_due_on(%{"on_credit" => on_credit} = params) when on_credit in [true, "true"] do
+    case Date.from_iso8601(to_string(params["payment_due_on"])) do
+      {:ok, date} ->
+        {:ok, date}
+
+      {:error, _reason} ->
+        {:error, [%{field: :payment_due_on, message: "escolha o dia do pagamento"}]}
+    end
+  end
+
+  defp payment_due_on(_params), do: {:ok, nil}
+
+  @doc """
+  Formulário de edição: cliente, observação, endereço, forma de pagamento e
+  os itens.
+
+  Os produtos vêm como na tela de novo pedido (lotes com saldo), para incluir
+  linha nova. A linha que já estava no pedido mantém lote, preço e custo da
+  venda; muda o peso.
+  """
+  def edit(conn, %{"id" => id}) do
+    user = actor(conn)
+    costs = manages_stock?(user)
+
+    case fetch(Order, id, actor: user, load: [:items]) do
+      {:ok, %{status: :cancelled} = order} ->
+        conn
+        |> put_flash(:error, "Pedido cancelado não pode ser editado.")
+        |> redirect(to: ~p"/pedidos/#{order.id}")
+
+      {:ok, order} ->
+        conn
+        |> assign_prop(:order, Serializers.order(order, with_items: true, costs: costs))
+        |> assign_prop(:products, sellable_products(user, costs))
+        |> assign_prop(:today, Date.to_iso8601(Core.Clock.today()))
+        |> render_inertia("Orders/Edit")
+
+      :error ->
+        not_found(conn, ~p"/pedidos", "Pedido não encontrado.")
+    end
+  end
+
+  def update(conn, %{"id" => id} = params) do
+    user = actor(conn)
+
+    with {:ok, order} <- fetch(Order, id, actor: user),
+         {:ok, attrs} <- edit_attrs(order, params),
+         {:ok, order} <- Orders.edit_order(order, attrs, actor: user) do
+      conn
+      |> put_flash(:info, "Pedido #{Orders.code(order)} atualizado.")
+      |> redirect(to: ~p"/pedidos/#{order.id}")
+    else
+      :error ->
+        not_found(conn, ~p"/pedidos", "Pedido não encontrado.")
 
       {:error, error} ->
-        fail(conn, error, ~p"/pedidos/novo")
+        fail(conn, error, ~p"/pedidos/#{id}/editar")
+    end
+  end
+
+  # Só vai para o domínio o que o pedido pode ter: retirada não tem
+  # endereço, e venda já paga não troca de forma de pagamento nem de itens —
+  # a tela nem mostra esses campos, e o domínio recusaria de qualquer jeito.
+  defp edit_attrs(order, params) do
+    attrs = %{customer_name: presence(params["customer_name"]), note: presence(params["note"])}
+
+    attrs =
+      if order.delivery_status == :not_required do
+        attrs
+      else
+        Map.merge(attrs, %{
+          delivery_address: presence(params["delivery_address"]),
+          delivery_lat: coordinate(params["delivery_lat"]),
+          delivery_lon: coordinate(params["delivery_lon"])
+        })
+      end
+
+    cond do
+      order.paid_at != nil ->
+        {:ok, attrs}
+
+      Map.has_key?(params, "items") ->
+        with {:ok, due_on} <- payment_due_on(params),
+             {:ok, items} <- build_items(params["items"]) do
+          {:ok, Map.merge(attrs, %{payment_due_on: due_on, items: items})}
+        end
+
+      true ->
+        with {:ok, due_on} <- payment_due_on(params),
+             do: {:ok, Map.put(attrs, :payment_due_on, due_on)}
     end
   end
 
@@ -262,6 +386,24 @@ defmodule Web.OrderController do
 
       :error ->
         not_found(conn, ~p"/pedidos", "Pedido não encontrado.")
+    end
+  end
+
+  @doc "Venda a prazo: o cliente pagou."
+  def mark_paid(conn, %{"id" => id}) do
+    user = actor(conn)
+
+    with {:ok, order} <- fetch(Order, id, actor: user),
+         {:ok, order} <- Orders.mark_paid(order, actor: user) do
+      conn
+      |> put_flash(:info, "Pagamento do pedido #{Orders.code(order)} registrado.")
+      |> redirect(to: ~p"/pedidos/#{order.id}")
+    else
+      :error ->
+        not_found(conn, ~p"/pedidos", "Pedido não encontrado.")
+
+      {:error, error} ->
+        fail(conn, error, ~p"/pedidos/#{id}")
     end
   end
 
@@ -302,16 +444,23 @@ defmodule Web.OrderController do
   defp delivery_message(_order), do: "Pedido voltou para a fila de entrega."
 
   # O carrinho chega como `[%{"product_id" => id, "batch_id" => id,
-  # "quantity" => "1,5", "unit" => "kg"}]`. A conversão para gramas é feita
-  # aqui; preço, custo e a checagem do lote são do domínio.
+  # "quantity" => "1,5", "unit" => "kg"}]`. Na edição, a linha que já estava
+  # no pedido vem como `%{"id" => item_id, "quantity", "unit"}` — o lote e o
+  # preço dela são os da venda. A conversão para gramas é feita aqui; preço,
+  # custo e a checagem do lote são do domínio.
   defp build_items(items) when is_list(items) and items != [] do
     Enum.reduce_while(items, {:ok, []}, fn item, {:ok, acc} ->
-      case {to_grams(item["quantity"], item["unit"]), presence(item["batch_id"])} do
-        {%Decimal{} = grams, batch_id} when is_binary(batch_id) ->
+      grams = to_grams(item["quantity"], item["unit"])
+
+      case {grams, presence(item["id"]), presence(item["batch_id"])} do
+        {%Decimal{} = grams, id, _batch_id} when is_binary(id) ->
+          {:cont, {:ok, [%{id: id, grams: grams} | acc]}}
+
+        {%Decimal{} = grams, nil, batch_id} when is_binary(batch_id) ->
           entry = %{product_id: item["product_id"], batch_id: batch_id, grams: grams}
           {:cont, {:ok, [entry | acc]}}
 
-        {%Decimal{}, nil} ->
+        {%Decimal{}, nil, nil} ->
           {:halt, {:error, [%{field: :items, message: "escolha o lote de cada item"}]}}
 
         _ ->

@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Bike,
   Boxes,
+  CalendarClock,
   ChevronDown,
   Clock3,
   MapPin,
@@ -27,13 +28,14 @@ import {
 } from "@/components/charts";
 import { useCurrentUser } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
-import { dateTimeLabel, money, weight } from "@/lib/format";
+import { dateLabel, dateTimeLabel, money, monthLabel, weight } from "@/lib/format";
 import type {
   DashboardSection,
   DeliveryAnalytics,
   HourAnalytics,
   Order,
   ProductAnalytics,
+  ReceivablesAnalytics,
   SalesAnalytics,
   StockAnalytics,
   TeamAnalytics,
@@ -109,6 +111,26 @@ export default function Dashboard({ range, today, costs, sections }: Props) {
             lines={3}
           >
             <Sales costs={costs} />
+          </Category>
+        )}
+
+        {has("receivables") && (
+          <Category
+            title="A prazo"
+            hint={`O que os clientes devem, e o que foi vendido a prazo ${periodo}.`}
+            icon={CalendarClock}
+            data="receivables"
+            lines={3}
+            action={
+              <Link
+                href="/pedidos?pagamento=pendente"
+                className="shrink-0 text-xs font-medium underline underline-offset-4"
+              >
+                não pagos
+              </Link>
+            }
+          >
+            <Receivables />
           </Category>
         )}
 
@@ -367,6 +389,121 @@ const Sales: React.FC<{ costs: boolean }> = ({ costs }) => {
         hint={`${money(cancellations.total)} em vendas desfeitas`}
         alert={cancellations.count > 0}
       />
+    </>
+  );
+};
+
+/**
+ * Vendas a prazo. O que está em aberto é de **agora** — conta que venceu mês
+ * passado continua sendo dinheiro na rua hoje —, e só o quadro "no período"
+ * segue o recorte de datas.
+ */
+const Receivables: React.FC = () => {
+  const receivables = useCategory<ReceivablesAnalytics>("receivables");
+  if (!receivables) return null;
+
+  const { open, overdue, dueSoon, period, schedule, overdueOrders } = receivables;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Stat
+          to="/pedidos?pagamento=pendente"
+          label="A receber"
+          value={money(open.total)}
+          hint={
+            open.orders === 0
+              ? "nenhuma venda em aberto"
+              : `${open.orders} ${open.orders === 1 ? "venda em aberto" : "vendas em aberto"}`
+          }
+        />
+        <Stat
+          to="/pedidos?pagamento=pendente"
+          label="Vencido"
+          value={money(overdue.total)}
+          hint={
+            overdue.orders === 0
+              ? "nada vencido"
+              : `${overdue.orders} ${overdue.orders === 1 ? "venda passou" : "vendas passaram"} do dia`
+          }
+          alert={overdue.orders > 0}
+        />
+      </div>
+
+      {dueSoon.orders > 0 && (
+        <p className="rounded-lg border border-border bg-muted/50 p-3 text-xs">
+          {money(dueSoon.total)} vence nos próximos 7 dias ({dueSoon.orders}{" "}
+          {dueSoon.orders === 1 ? "venda" : "vendas"}).
+        </p>
+      )}
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <p className="text-xs text-muted-foreground">No período</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Tally label="Vendido a prazo" value={money(period.total)} />
+            <Tally label="Do faturamento" value={`${Math.round(period.share * 100)}%`} />
+            <Tally label="Recebido" value={money(period.received.total)} />
+            <Tally
+              label="Pagos com atraso"
+              value={period.receivedLate}
+              alert={period.receivedLate > 0}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {overdueOrders.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="size-4 text-warning-foreground" />
+              Quem cobrar primeiro
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {overdueOrders.map((order) => (
+              <Link
+                key={order.id}
+                href={`/pedidos/${order.id}`}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">
+                    {order.customerName ?? `Pedido ${order.code}`}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {money(order.total)} · venceu {dateLabel(order.paymentDueOn)}
+                  </span>
+                </span>
+                <Badge variant="warning">
+                  {order.daysLate} {order.daysLate === 1 ? "dia" : "dias"}
+                </Badge>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {schedule.length > 0 && (
+        <ChartCard
+          title="Quando o dinheiro entra"
+          hint="O que está em aberto, pelo mês do vencimento."
+        >
+          <RankingChart
+            data={schedule.map((month) => ({ name: monthLabel(month.month), value: month.total }))}
+            unit="A receber"
+          />
+          <ChartTable
+            columns={["Mês", "Vendas", "A receber"]}
+            rows={schedule.map((month) => [
+              monthLabel(month.month),
+              month.orders,
+              money(month.total),
+            ])}
+          />
+        </ChartCard>
+      )}
     </>
   );
 };

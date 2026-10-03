@@ -26,8 +26,8 @@ defmodule Core.Release do
   Roda `priv/repo/seeds.exs` dentro do release.
 
   O arquivo é o mesmo do desenvolvimento e é idempotente: rodar de novo não
-  duplica nada e não mexe em quem já existe. Em produção o normal é chamar com
-  `SEED_DEMO=false`, para nascer só o admin.
+  duplica nada e não mexe em quem já existe. Dentro do release não há `Mix`,
+  então nasce só o admin — a loja de exemplo é exclusiva de `Mix.env() == :dev`.
   """
   def seed do
     load_app()

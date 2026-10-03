@@ -21,9 +21,9 @@ balcão; `entregador` só recebe os pedidos prontos e marca a entrega. O admin
 pode liberar a um funcionário específico a permissão de gerenciar o estoque
 (`can_manage_stock`), a de gerenciar os pedidos de toda a equipe
 (`can_manage_orders`) e a de abrir o painel da loja (`can_view_dashboard`) —
-esta última **seção por seção** (`dashboard_sections`): mapa, vendas, horários,
-produtos, equipe, entrega, estoque e últimos pedidos são oito interruptores
-independentes. A tela de Equipe tem todos eles.
+esta última **seção por seção** (`dashboard_sections`): mapa, vendas, vendas a
+prazo, horários, produtos, equipe, entrega, estoque e últimos pedidos são nove
+interruptores independentes. A tela de Equipe tem todos eles.
 
 **Estoque a peso, em lotes.** Produtos são vendidos por grama ou quilo.
 Internamente **tudo é grama** (`Decimal`); a unidade do produto diz só como ele
@@ -44,6 +44,23 @@ item — mudar preço ou comprar mais caro depois não reescreve o histórico ne
 lucro daquela venda. Custo e lucro só aparecem para admin e para quem gerencia
 estoque.
 
+**Venda à vista ou a prazo.** A venda a prazo leva o dia combinado com o
+cliente (atalhos de 7, 15 e 30 dias, fim do mês ou qualquer dia no calendário)
+e o nome de quem vai pagar. Ela fica em aberto até alguém do balcão marcar
+como paga na tela do pedido — baixa que entra no log de auditoria com quem
+recebeu. A lista de pedidos filtra os **não pagos**, o que vence antes
+primeiro, e marca os vencidos.
+
+**Editar pedido.** Na tela do pedido, "Editar pedido" corrige cliente,
+observação, endereço (e o ponto no mapa), a forma de pagamento e os itens:
+muda o peso de uma linha, tira linha, inclui produto. O estoque acompanha no
+mesmo lote — peso a mais sai dele, peso a menos volta para ele — e os totais
+são refeitos com o desconto que o pedido já tinha. Linha que já estava guarda
+o preço e o custo da venda; produto incluído entra com o preço de agora.
+Conta a prazo já paga não muda de itens nem de forma de pagamento. Cada
+edição entra no log de auditoria com quem editou e o pedido como era antes;
+só o administrador vê isso, e também o "editado por" na tela do pedido.
+
 **Entrega com endereço, mapa e entregador.** O pedido guarda o endereço
 escrito no balcão; quem registra pode procurá-lo no mapa (OpenStreetMap, sem
 chave de API) e fixar o ponto, que fica gravado no pedido. Pronto o pedido, o
@@ -56,7 +73,9 @@ mapa de onde os pedidos foram parar (um pino por endereço, o balão com os
 pedidos daquele ponto), vendas e lucro por dia, movimento por hora, o que mais
 vendeu, quem registrou,
 como anda a entrega (incluindo tempo médio e desempenho por entregador), o que
-foi cancelado e onde o dinheiro está parado no estoque. Cada gráfico traz a
+foi cancelado, quanto os clientes devem a prazo (em aberto, vencido, o que vence
+na semana, quem cobrar primeiro e o que entrou no período) e onde o dinheiro
+está parado no estoque. Cada gráfico traz a
 tabela dos números junto. **Cada categoria busca o próprio dado quando chega
 perto da tela** — a página abre só com o recorte de datas, e o que ninguém
 rolou até o fim nem é consultado no banco. Cada bloco recolhe no toque do

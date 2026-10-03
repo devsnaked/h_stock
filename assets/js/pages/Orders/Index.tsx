@@ -7,14 +7,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DeliveryBadge } from "@/components/DeliveryBadge";
+import { PaymentBadge } from "@/components/PaymentBadge";
 import { Pagination, type Page } from "@/components/Pagination";
 import { cn } from "@/lib/utils";
-import { dateTimeLabel, money } from "@/lib/format";
+import { dateLabel, dateTimeLabel, money } from "@/lib/format";
 import type { Order } from "@/types";
 
 type Props = {
   orders: Order[];
   filter: string;
+  /** Só vendas a prazo ainda não pagas — combina com o filtro de entrega. */
+  unpaid: boolean;
   /** O termo em vigor, devolvido pelo servidor — a busca mora na URL. */
   search: string;
   /** Quem alcança os pedidos da equipe inteira vê de quem é cada um. */
@@ -29,7 +32,14 @@ const FILTERS = [
   { id: "entregues", label: "Entregues" },
 ];
 
-export default function OrdersIndex({ orders, filter, search, managesOrders, page }: Props) {
+export default function OrdersIndex({
+  orders,
+  filter,
+  unpaid,
+  search,
+  managesOrders,
+  page,
+}: Props) {
   const { url } = usePage();
 
   /**
@@ -87,6 +97,25 @@ export default function OrdersIndex({ orders, filter, search, managesOrders, pag
                 {option.label}
               </button>
             ))}
+
+            {/* Pagamento é outra pergunta que a entrega, e por isso um
+                interruptor à parte: "a entregar e não pagos" é uma lista
+                válida. Separado dos outros por um traço para não parecer mais
+                uma opção do mesmo grupo. */}
+            <span aria-hidden className="h-5 w-px shrink-0 bg-border" />
+            <button
+              type="button"
+              onClick={() => navigate({ pagamento: unpaid ? null : "pendente", pagina: null })}
+              aria-pressed={unpaid}
+              className={cn(
+                "h-9 shrink-0 rounded-full border px-3.5 text-sm font-medium transition-colors",
+                unpaid
+                  ? "border-transparent bg-primary text-primary-foreground"
+                  : "border-border bg-card text-muted-foreground",
+              )}
+            >
+              Não pagos
+            </button>
           </div>
 
           <Button asChild size="sm" className="shrink-0">
@@ -111,9 +140,11 @@ export default function OrdersIndex({ orders, filter, search, managesOrders, pag
               <p className="text-sm text-muted-foreground">
                 {search !== ""
                   ? `Nada encontrado para "${search}".`
-                  : filter === "todos"
-                    ? "Nenhum pedido registrado."
-                    : "Nenhum pedido nesta situação."}
+                  : unpaid
+                    ? "Nenhuma venda a prazo em aberto."
+                    : filter === "todos"
+                      ? "Nenhum pedido registrado."
+                      : "Nenhum pedido nesta situação."}
               </p>
             </CardContent>
           </Card>
@@ -143,6 +174,23 @@ export default function OrdersIndex({ orders, filter, search, managesOrders, pag
                             com {order.driverName}
                           </p>
                         )}
+
+                        {/* Na lista de cobrança, o vencimento é a primeira
+                            coisa que se procura. */}
+                        {order.status === "completed" &&
+                          order.paymentDueOn &&
+                          order.paidAt === null && (
+                            <p
+                              className={cn(
+                                "text-xs",
+                                order.paymentOverdue
+                                  ? "font-medium text-warning-foreground"
+                                  : "text-muted-foreground",
+                              )}
+                            >
+                              vence {dateLabel(order.paymentDueOn)}
+                            </p>
+                          )}
                       </div>
 
                       <div className="flex shrink-0 flex-col items-end gap-1">
@@ -158,7 +206,10 @@ export default function OrdersIndex({ orders, filter, search, managesOrders, pag
                         {order.status === "cancelled" ? (
                           <Badge variant="destructive">cancelado</Badge>
                         ) : (
-                          <DeliveryBadge order={order} />
+                          <div className="flex flex-wrap justify-end gap-1">
+                            <PaymentBadge order={order} />
+                            <DeliveryBadge order={order} />
+                          </div>
                         )}
                       </div>
                     </CardContent>

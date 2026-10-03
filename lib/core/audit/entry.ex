@@ -111,7 +111,9 @@ defmodule Core.Audit.Entry do
                     :order_driver_assigned,
                     :order_out_for_delivery,
                     :order_delivered,
-                    :order_reopened
+                    :order_reopened,
+                    :order_paid,
+                    :order_updated
                   ]
     end
 

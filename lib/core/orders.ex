@@ -9,6 +9,10 @@ defmodule Core.Orders do
   continua sendo o daquele dia.
 
   O desconto é um só, no pedido inteiro, em porcentagem ou em reais.
+
+  A venda pode ser **à vista** (paga no balcão) ou **a prazo**: nasce com o
+  dia combinado (`payment_due_on`) e fica em aberto até alguém do balcão dar
+  baixa (`mark_paid/2`). Ver `overdue?/2`.
   """
   use Ash.Domain, otp_app: :h_stock
 
@@ -24,6 +28,8 @@ defmodule Core.Orders do
       define :mark_out_for_delivery, action: :mark_out_for_delivery
       define :mark_delivered, action: :mark_delivered
       define :reopen_delivery, action: :reopen_delivery
+      define :mark_paid, action: :mark_paid
+      define :edit_order, action: :edit
     end
 
     resource Core.Orders.OrderItem
@@ -43,4 +49,19 @@ defmodule Core.Orders do
     |> String.slice(0, 6)
     |> String.upcase()
   end
+
+  @doc """
+  Venda a prazo que passou do dia combinado sem ser paga.
+
+  O "hoje" é o da loja (`Core.Clock`): uma conta que vence hoje não está
+  vencida às 22h de São Paulo só porque em UTC já é amanhã. Pedido cancelado
+  não deve nada, e por isso nunca está vencido.
+  """
+  @spec overdue?(Core.Orders.Order.t(), Date.t()) :: boolean()
+  def overdue?(order, today \\ Core.Clock.today())
+
+  def overdue?(%{status: :completed, payment_due_on: %Date{} = due, paid_at: nil}, today),
+    do: Date.before?(due, today)
+
+  def overdue?(_order, _today), do: false
 end

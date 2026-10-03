@@ -32,7 +32,17 @@ defmodule Core.Accounts.Permissions do
   # A ordem é a do painel, de cima para baixo. Ela é a canônica: o que vem do
   # formulário é reordenado por ela, então a lista guardada no banco lê como a
   # tela.
-  @dashboard_sections [:map, :sales, :hours, :products, :team, :delivery, :stock, :recent]
+  @dashboard_sections [
+    :map,
+    :sales,
+    :receivables,
+    :hours,
+    :products,
+    :team,
+    :delivery,
+    :stock,
+    :recent
+  ]
 
   @doc "Todas as seções de dados do painel, na ordem em que a tela as mostra."
   def dashboard_sections, do: @dashboard_sections
@@ -46,7 +56,7 @@ defmodule Core.Accounts.Permissions do
   As seções que existem para esta pessoa, na ordem do painel.
 
   Sem o painel, nenhuma — mesmo que a lista guardada diga outra coisa. É o que
-  torna `can_view_dashboard` uma chave de verdade, e não só o primeiro de oito
+  torna `can_view_dashboard` uma chave de verdade, e não só o primeiro de nove
   interruptores independentes.
   """
   def dashboard_sections(%{role: :admin}), do: @dashboard_sections

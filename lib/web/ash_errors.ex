@@ -39,14 +39,24 @@ defmodule Web.AshErrors do
   end
 
   # As mensagens do Ash vêm com placeholders (`%{max}`) resolvidos por `vars`.
+  # Só o que a mensagem cita é convertido: as validações levam em `vars` mais
+  # do que a frase usa (`present`/`absent` levam a lista de atributos), e uma
+  # mensagem própria sem placeholder não pode quebrar por causa delas.
   defp message(%{message: message} = error) when is_binary(message) do
     error
     |> Map.get(:vars, [])
     |> Enum.reduce(message, fn {key, value}, acc ->
-      String.replace(acc, "%{#{key}}", to_string(value))
+      placeholder = "%{#{key}}"
+
+      if String.contains?(acc, placeholder),
+        do: String.replace(acc, placeholder, var(value)),
+        else: acc
     end)
   end
 
   defp message(%_{} = error) when is_exception(error), do: Exception.message(error)
   defp message(error), do: inspect(error)
+
+  defp var(value) when is_list(value), do: Enum.map_join(value, ", ", &var/1)
+  defp var(value), do: to_string(value)
 end

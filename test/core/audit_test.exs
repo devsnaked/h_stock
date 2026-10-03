@@ -182,6 +182,70 @@ defmodule Core.AuditTest do
       {:ok, _order} = Orders.reopen_delivery(order, actor: admin)
       assert ultima(admin).action == :order_reopened
     end
+
+    test "venda a prazo diz o vencimento, e a baixa diz quem recebeu" do
+      admin = admin_fixture(name: "Chefe")
+      vendedor = user_fixture(name: "Joana")
+      product = product_fixture(price_per_gram: "0.10", stock_grams: 1_000)
+      due = Date.add(Core.Clock.today(), 10)
+
+      {:ok, order} =
+        Orders.register_order(
+          %{customer_name: "Dona Marta", payment_due_on: due, items: [sale_item(product, 100)]},
+          actor: vendedor
+        )
+
+      assert ultima(admin).summary =~ "a prazo, vence em #{Calendar.strftime(due, "%d/%m/%Y")}"
+
+      {:ok, _order} = Orders.mark_paid(order, actor: admin)
+
+      baixa = ultima(admin)
+      assert baixa.action == :order_paid
+      assert baixa.user_name == "Chefe"
+      assert baixa.subject_label == Orders.code(order)
+      assert baixa.summary =~ "R$ 10,00"
+      assert baixa.summary =~ "Dona Marta"
+    end
+
+    test "a edição guarda quem editou, o que mudou e o pedido de antes" do
+      admin = admin_fixture(name: "Chefe")
+      vendedor = user_fixture(name: "Joana")
+      product = product_fixture(stock_grams: 1_000)
+      due = Date.add(Core.Clock.today(), 10)
+
+      {:ok, order} =
+        Orders.register_order(
+          %{customer_name: "Dona Marta", note: "tocar", items: [sale_item(product, 100)]},
+          actor: vendedor
+        )
+
+      {:ok, order} =
+        Orders.edit_order(order, %{customer_name: "Dona Rita", payment_due_on: due},
+          actor: vendedor
+        )
+
+      edicao = ultima(admin)
+      assert edicao.action == :order_updated
+      assert edicao.user_name == "Joana"
+      assert edicao.summary =~ ~s(Cliente alterado de "Dona Marta" para "Dona Rita")
+
+      assert edicao.summary =~
+               "Passou para a prazo, vence em #{Calendar.strftime(due, "%d/%m/%Y")}"
+
+      # A observação não mudou: não entra na frase, mas o retrato de antes
+      # vai inteiro.
+      refute edicao.summary =~ "Observação"
+
+      antes = edicao.details["antes"] || edicao.details[:antes]
+      assert (antes["customer_name"] || antes[:customer_name]) == "Dona Marta"
+      assert (antes["note"] || antes[:note]) == "tocar"
+      assert (antes["payment_due_on"] || antes[:payment_due_on]) == nil
+
+      # Salvar de novo sem mudar nada não vira linha.
+      linhas = length(log(admin))
+      {:ok, _} = Orders.edit_order(order, %{customer_name: "Dona Rita"}, actor: vendedor)
+      assert length(log(admin)) == linhas
+    end
   end
 
   describe "quem pode ler" do

@@ -148,6 +148,9 @@ defmodule Web.Router do
     post "/pedidos", OrderController, :create
     post "/pedidos/:id/cancelar", OrderController, :cancel
     post "/pedidos/:id/entregador", OrderController, :assign_driver
+    post "/pedidos/:id/pagamento", OrderController, :mark_paid
+    get "/pedidos/:id/editar", OrderController, :edit
+    put "/pedidos/:id", OrderController, :update
 
     get "/produtos", ProductController, :index
     get "/produtos/:id", ProductController, :show

@@ -150,7 +150,7 @@ defmodule Core.Orders.Changes.BuildOrder do
             "estoque insuficiente de #{product.name} no lote #{batch.label}: há #{batch.remaining_grams}g"}}
 
         true ->
-          {:cont, {:ok, [item(product, batch, grams) | acc]}}
+          {:cont, {:ok, [line(product, batch, grams) | acc]}}
       end
     end)
     |> case do
@@ -159,7 +159,11 @@ defmodule Core.Orders.Changes.BuildOrder do
     end
   end
 
-  defp item(product, batch, grams) do
+  @doc """
+  Uma linha nova do pedido, com preço do produto e custo do lote **de agora**
+  congelados nela. A edição do pedido usa a mesma, para item incluído depois.
+  """
+  def line(product, batch, grams) do
     %{
       product_id: product.id,
       product_name: product.name,
@@ -173,7 +177,12 @@ defmodule Core.Orders.Changes.BuildOrder do
     }
   end
 
-  defp discount_total(subtotal, :percent, value) do
+  @doc """
+  O desconto em reais sobre um subtotal. Porcentagem é refeita sobre o
+  subtotal; valor fixo nunca passa dele. A edição dos itens recalcula por
+  aqui, com o desconto que o pedido já tinha.
+  """
+  def discount_total(subtotal, :percent, value) do
     subtotal
     |> Decimal.mult(value)
     |> Decimal.div(100)
@@ -181,8 +190,8 @@ defmodule Core.Orders.Changes.BuildOrder do
     |> Decimal.min(subtotal)
   end
 
-  defp discount_total(subtotal, :amount, value), do: value |> money() |> Decimal.min(subtotal)
-  defp discount_total(_subtotal, _type, _value), do: Decimal.new(0)
+  def discount_total(subtotal, :amount, value), do: value |> money() |> Decimal.min(subtotal)
+  def discount_total(_subtotal, _type, _value), do: Decimal.new(0)
 
   defp take_from_stock(_changeset, order, context) do
     order = Ash.load!(order, :items, authorize?: false)

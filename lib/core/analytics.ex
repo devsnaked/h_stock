@@ -34,6 +34,7 @@ defmodule Core.Analytics do
 
   alias Core.Clock
   alias Core.Inventory.Product
+  alias Core.Orders
   alias Core.Orders.Order
 
   @doc """
@@ -83,6 +84,94 @@ defmodule Core.Analytics do
       cancellations: %{count: length(cancelled), total: sum(cancelled, & &1.total)}
     }
   end
+
+  @doc """
+  Vendas a prazo: o que os clientes devem **agora** e como o prazo andou no
+  período.
+
+  O que está em aberto não depende do recorte — a conta que venceu mês passado
+  continua sendo dinheiro na rua hoje, como a fila de entrega. O período
+  responde outras perguntas: quanto da venda foi a prazo, e quanto entrou de
+  pagamento (pela data em que entrou, não pela data da venda).
+  """
+  def receivables(actor, from, to) do
+    today = Clock.today()
+    week_end = Date.add(today, 6)
+    {start_at, end_at} = Clock.range(from, to)
+
+    open =
+      Order
+      |> Ash.Query.filter(status == :completed and not is_nil(payment_due_on) and is_nil(paid_at))
+      |> Ash.Query.select([:id, :customer_name, :total, :status, :payment_due_on, :paid_at])
+      |> Ash.Query.sort(payment_due_on: :asc, inserted_at: :asc)
+      |> Ash.read!(actor: actor)
+
+    overdue = Enum.filter(open, &Orders.overdue?(&1, today))
+
+    due_soon =
+      Enum.filter(open, fn order ->
+        Date.compare(order.payment_due_on, today) != :lt and
+          Date.compare(order.payment_due_on, week_end) != :gt
+      end)
+
+    sold =
+      actor
+      |> orders(from, to, [:status, :total, :payment_due_on])
+      |> Enum.filter(&(&1.status == :completed))
+
+    on_credit = Enum.filter(sold, &(&1.payment_due_on != nil))
+
+    received =
+      Order
+      |> Ash.Query.filter(
+        status == :completed and not is_nil(payment_due_on) and paid_at >= ^start_at and
+          paid_at < ^end_at
+      )
+      |> Ash.Query.select([:id, :total, :payment_due_on, :paid_at])
+      |> Ash.read!(actor: actor)
+
+    revenue = sum(sold, & &1.total)
+    credit = sum(on_credit, & &1.total)
+
+    %{
+      open: tally(open),
+      overdue: tally(overdue),
+      # Os próximos sete dias, hoje incluído: é a cobrança da semana.
+      due_soon: tally(due_soon),
+      period: %{
+        orders: length(on_credit),
+        total: credit,
+        # Fração do faturamento do período que foi vendida a prazo.
+        share: if(revenue == 0, do: 0.0, else: credit / revenue),
+        received: tally(received),
+        # Pago depois do dia combinado — a pontualidade de quem compra a prazo.
+        received_late:
+          Enum.count(received, &Date.after?(local_date(&1.paid_at), &1.payment_due_on))
+      },
+      # O que está em aberto, pelo mês do vencimento: quanto entra quando.
+      schedule:
+        open
+        |> Enum.group_by(&Calendar.strftime(&1.payment_due_on, "%Y-%m"))
+        |> Enum.map(fn {month, orders} -> Map.put(tally(orders), :month, month) end)
+        |> Enum.sort_by(& &1.month),
+      # Os mais atrasados primeiro: é a lista de quem cobrar.
+      overdue_orders:
+        overdue
+        |> Enum.take(5)
+        |> Enum.map(fn order ->
+          %{
+            id: order.id,
+            code: Orders.code(order),
+            customer_name: order.customer_name,
+            total: number(order.total),
+            payment_due_on: Date.to_iso8601(order.payment_due_on),
+            days_late: Date.diff(today, order.payment_due_on)
+          }
+        end)
+    }
+  end
+
+  defp tally(orders), do: %{orders: length(orders), total: sum(orders, & &1.total)}
 
   @doc """
   Pedidos por hora do dia. Responde "a que horas a loja vende?", que é o
